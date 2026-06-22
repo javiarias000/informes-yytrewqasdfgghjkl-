@@ -285,15 +285,29 @@ async function readStudentSheetConfigured(sheets, spreadsheetId, cfg) {
   // ── Parse grade tab → noteMap ─────────────────────────────────────────────
   const noteMap = {}; // normName → nota
   const gradeStart = gradeHeaderIdx + (gradeRows.length > gradeHeaderIdx + 1 ? 2 : 1);
+
+  // Auto-detect nombre column: if gradeNom is not set, check if the next column
+  // after gradeApe contains text names (not numbers) in the first data row.
+  let effectiveGradeNom = cols.gradeNom ?? null;
+  if (effectiveGradeNom == null && gradeRows[gradeStart]) {
+    const nextIdx = (cols.gradeApe ?? 0) + 1;
+    const sample  = (gradeRows[gradeStart][nextIdx] || '').trim();
+    if (sample && /[a-záéíóúüñ]/i.test(sample) && isNaN(parseFloat(sample.replace(',', '.')))) {
+      effectiveGradeNom = nextIdx;
+    }
+  }
+
   for (let i = gradeStart; i < gradeRows.length; i++) {
     const row = gradeRows[i];
     const ape  = (row[cols.gradeApe]  || '').trim();
-    const nom  = cols.gradeNom != null ? (row[cols.gradeNom] || '').trim() : '';
+    const nom  = effectiveGradeNom != null ? (row[effectiveGradeNom] || '').trim() : '';
     const full = [ape, nom].filter(Boolean).join(' ');
     const noteStr = (row[cols.nota] || '').trim().replace(',', '.');
     const note = parseFloat(noteStr);
     if (full && !isNaN(note)) noteMap[normName(full)] = note;
   }
+
+  console.log(`  grade start=${gradeStart} gradeApe=${cols.gradeApe} effectiveGradeNom=${effectiveGradeNom} nota=${cols.nota} → ${Object.keys(noteMap).length} notas`);
 
   // ── Merge ─────────────────────────────────────────────────────────────────
   const result = {};
