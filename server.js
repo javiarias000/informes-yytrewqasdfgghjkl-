@@ -4,10 +4,13 @@ const { google } = require('googleapis');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const OpenAI = require('openai');
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ── OAuth setup ───────────────────────────────────────────────────────────────
 
@@ -404,27 +407,149 @@ app.post('/api/load-data', async (req, res) => {
   }
 });
 
+// ── API: analyze Google Form structure ───────────────────────────────────────
+
+app.post('/api/analyze-form', async (req, res) => {
+  try {
+    const { formUrl } = req.body;
+    const viewUrl = formUrl.trim()
+      .replace('/formResponse', '/viewform')
+      .replace(/[?#].*$/, '');
+
+    const htmlRes = await axios.get(viewUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      timeout: 15000,
+    });
+
+    const html = htmlRes.data;
+
+    // Extract FB_PUBLIC_LOAD_DATA_ JSON
+    const dataStart = html.indexOf('var FB_PUBLIC_LOAD_DATA_ = ');
+    if (dataStart === -1) throw new Error('No se encontró la estructura del formulario en la página');
+
+    const jsonStart = dataStart + 'var FB_PUBLIC_LOAD_DATA_ = '.length;
+    const jsonEnd = html.indexOf(';</script>', jsonStart);
+    if (jsonEnd === -1) throw new Error('No se pudo extraer el JSON del formulario');
+
+    const data = JSON.parse(html.slice(jsonStart, jsonEnd));
+
+    // Recursive scan: a question entry matches [largeNumber, null, "label", null, 0-15, ...]
+    const rawFields = [];
+    const seen = new Set();
+    function scan(node, depth) {
+      if (!Array.isArray(node) || depth > 12) return;
+      if (
+        node.length >= 5 &&
+        typeof node[0] === 'number' && String(node[0]).length >= 8 &&
+        node[1] === null &&
+        typeof node[2] === 'string' && node[2].trim().length > 0 &&
+        typeof node[4] === 'number' && node[4] >= 0 && node[4] <= 15 &&
+        !seen.has(node[0])
+      ) {
+        seen.add(node[0]);
+        const TYPES = { 0: 'short_text', 1: 'paragraph', 2: 'radio', 3: 'dropdown', 4: 'checkbox', 5: 'scale', 9: 'date', 10: 'time' };
+        const choices = Array.isArray(node[6])
+          ? node[6].filter(c => Array.isArray(c) && c[0]).map(c => String(c[0])).slice(0, 8)
+          : [];
+        rawFields.push({ entryId: node[0], label: node[2].trim(), type: TYPES[node[4]] || 'other', choices });
+        return;
+      }
+      for (const child of node) scan(child, depth + 1);
+    }
+    scan(data, 0);
+
+    if (rawFields.length === 0) throw new Error('No se encontraron campos en el formulario. Verifica que la URL sea correcta.');
+
+    // Ask GPT to suggest mappings
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `Eres un experto en formularios escolares de música en Ecuador.
+Analiza los campos del formulario y asigna a cada uno el tipo de dato más apropiado.
+
+Tipos de datos disponibles:
+- "auto_curso": Curso y tutor del estudiante (dropdown, auto-detectado de la hoja de cálculo)
+- "auto_materia": Nombre de la materia musical (tomado del nombre configurado en la app)
+- "text_docente": Nombre del docente (texto que escribe el usuario, UNO solo para todos)
+- "text_contenidos": Contenidos del quimestre (el docente escribe UNO POR MATERIA, va en cada tarjeta de materia)
+- "auto_dificultades": Lista de estudiantes con dificultades académicas (generado automáticamente)
+- "text_acciones": Acciones correctivas con estudiantes en dificultad (texto que escribe el usuario, UNO solo para todos)
+- "informe_completo": Texto completo que combina contenidos + lista de dificultades + acciones en un solo bloque
+- "ignore": Campo que no aplica o debe ignorarse
+
+Responde ÚNICAMENTE con JSON: {"fields": [{"entryId": number, "label": "...", "mapping": "tipo", "description": "qué dato se enviará en español, máximo 10 palabras"}]}`,
+        },
+        {
+          role: 'user',
+          content: `Campos detectados en el formulario:\n${JSON.stringify(rawFields, null, 2)}`,
+        },
+      ],
+    });
+
+    const result = JSON.parse(completion.choices[0].message.content);
+    res.json({ success: true, fields: result.fields });
+  } catch (err) {
+    console.error('[analyze-form]', err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
 // ── API: submit forms ─────────────────────────────────────────────────────────
 
 app.post('/api/submit-forms', async (req, res) => {
-  const { submissions } = req.body;
-  // submissions: [{ dropdownOption, docente, materia, formText }]
+  const { submissions, formUrl, formFields } = req.body;
+  const targetUrl = (formUrl || FORM_URL).trim().replace('/viewform', '/formResponse');
 
   const results = [];
 
   for (const sub of submissions) {
     try {
       const params = new URLSearchParams();
-      params.append('entry.1403373118', sub.dropdownOption);
-      params.append('entry.697644543', sub.docente);
-      params.append('entry.2132854786', sub.materia);
-      params.append('entry.411694821', sub.formText);
+
+      if (formFields && formFields.length > 0) {
+        // Dynamic mode: use the detected form fields
+        for (const field of formFields) {
+          let value;
+          switch (field.mapping) {
+            case 'auto_curso':      value = sub.dropdownOption; break;
+            case 'text_docente':    value = sub.docente; break;
+            case 'auto_materia':    value = sub.materia; break;
+            case 'text_contenidos': value = sub.contenidos || ''; break;
+            case 'auto_dificultades':
+              value = sub.dificultades && sub.dificultades.length
+                ? sub.dificultades.map(d => `- ${d.nombre} (${d.promedio}/10)`).join('\n')
+                : 'Ninguno';
+              break;
+            case 'text_acciones':
+              value = sub.dificultades && sub.dificultades.length
+                ? (sub.acciones || '')
+                : 'No aplica';
+              break;
+            case 'informe_completo': value = sub.formText; break;
+            case 'ignore': continue;
+            default: value = ''; break;
+          }
+          if (value !== undefined && value !== null) {
+            params.append(`entry.${field.entryId}`, value);
+          }
+        }
+      } else {
+        // Legacy fallback: hardcoded entries
+        params.append('entry.1403373118', sub.dropdownOption);
+        params.append('entry.697644543',  sub.docente);
+        params.append('entry.2132854786', sub.materia);
+        params.append('entry.411694821',  sub.formText);
+      }
+
       params.append('fvv', '1');
       params.append('draftResponse', '[]');
       params.append('pageHistory', '0');
       params.append('fbzx', Math.floor(Math.random() * 1e16).toString());
 
-      await axios.post(FORM_URL, params.toString(), {
+      await axios.post(targetUrl, params.toString(), {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         maxRedirects: 0,
         validateStatus: s => s < 400,
@@ -443,6 +568,75 @@ app.post('/api/submit-forms', async (req, res) => {
   }
 
   res.json({ results });
+});
+
+// ── API: analyze sheet structure with Claude ──────────────────────────────────
+
+app.post('/api/analyze-sheet', async (req, res) => {
+  try {
+    const { sheetUrl } = req.body;
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+    const id = extractSheetId(sheetUrl);
+
+    const tabs = await getTabNames(sheets, id);
+
+    // Sample first 15 rows of each tab
+    const tabSamples = {};
+    for (const tab of tabs) {
+      const rows = await readTab(sheets, id, tab);
+      tabSamples[tab] = rows.slice(0, 15);
+    }
+
+    const sheetDescription = tabs.map(tab => {
+      const rows = tabSamples[tab];
+      const preview = rows.map((row, i) =>
+        `  Fila ${i}: [${row.map(c => JSON.stringify(c || '')).join(', ')}]`
+      ).join('\n');
+      return `=== Hoja: "${tab}" (${rows.length} filas mostradas) ===\n${preview}`;
+    }).join('\n\n');
+
+    const prompt = `Analiza la estructura de esta hoja de cálculo de Google Sheets y determina:
+
+1. Cuál hoja contiene los datos de contacto de estudiantes (apellidos, nombres, curso/grado/paralelo)
+2. Cuál hoja contiene las calificaciones finales (nota final y apellidos de estudiantes)
+3. Los índices de columna (empezando en 0) para cada dato relevante
+
+Datos de la hoja de cálculo:
+
+${sheetDescription}
+
+Responde ÚNICAMENTE con un JSON válido en este formato exacto (sin texto adicional):
+{
+  "contactTab": "nombre exacto de la hoja de contactos",
+  "gradeTab": "nombre exacto de la hoja de calificaciones",
+  "cols": {
+    "ape": <índice columna apellidos en contactos>,
+    "nom": <índice columna nombres en contactos, o null si no hay>,
+    "curso": <índice columna curso/paralelo en contactos>,
+    "gradeApe": <índice columna apellidos en calificaciones>,
+    "gradeNom": <índice columna nombres en calificaciones, o null si no hay>,
+    "nota": <índice columna nota final en calificaciones>
+  }
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'Eres un asistente que analiza hojas de cálculo de Google Sheets. Responde únicamente con JSON válido.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    });
+
+    const result = JSON.parse(completion.choices[0].message.content);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[analyze-sheet]', err.message);
+    res.json({ success: false, error: err.message });
+  }
 });
 
 app.listen(8000, () => console.log('Servidor en http://localhost:8000'));

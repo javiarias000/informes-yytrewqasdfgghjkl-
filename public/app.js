@@ -3,6 +3,7 @@
 let subjectCounter = 0;
 const subjects = {}; // id → { name, sheetUrl, tabs, tabColumns, contactTab, gradeTab, cols }
 let loadedGroups = [];
+let formFields = []; // populated after analyzeForm()
 
 const INITIAL_SUBJECTS = ['Arreglos Musicales', 'Ensamble de Guitarras', 'Guitarra Clásica'];
 
@@ -42,6 +43,10 @@ function subjectCardHTML(id, name) {
       <input id="url-${id}" type="text" placeholder="URL de Google Sheets..."
         oninput="subjects[${id}].sheetUrl = this.value"
         class="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-xs" />
+      <button onclick="autoDetect(${id})"
+        class="bg-purple-100 hover:bg-purple-200 text-purple-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap">
+        🤖 Auto-detectar
+      </button>
       <button onclick="exploreTabs(${id})"
         class="bg-blue-100 hover:bg-blue-200 text-blue-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap">
         Explorar hojas
@@ -142,6 +147,181 @@ function subjectCardHTML(id, name) {
 function removeSubject(id) {
   delete subjects[id];
   document.getElementById(`card-${id}`).remove();
+}
+
+// ── Form analysis (AI) ───────────────────────────────────────────────────────
+
+const MAPPING_INFO = {
+  auto_curso:        { icon: '🔗', label: 'Auto: Curso y tutor del estudiante',      color: '#dbeafe', text: '#1d4ed8' },
+  auto_materia:      { icon: '🎵', label: 'Auto: Nombre de la materia',              color: '#dbeafe', text: '#1d4ed8' },
+  text_docente:      { icon: '👤', label: 'Nombre del docente (lo escribe el usuario)', color: '#ffedd5', text: '#c2410c' },
+  text_contenidos:   { icon: '📝', label: 'Contenidos por materia (en cada tarjeta)', color: '#dcfce7', text: '#15803d' },
+  auto_dificultades: { icon: '⚠️', label: 'Auto: Estudiantes con dificultades',      color: '#fef9c3', text: '#a16207' },
+  text_acciones:     { icon: '🛠️', label: 'Acciones correctivas (lo escribe el usuario)', color: '#ffedd5', text: '#c2410c' },
+  informe_completo:  { icon: '📄', label: 'Informe completo (contenidos + dificultades + acciones)', color: '#f3e8ff', text: '#7e22ce' },
+  ignore:            { icon: '🚫', label: 'Se omite',                                color: '#f3f4f6', text: '#6b7280' },
+};
+
+async function analyzeForm() {
+  const url = document.getElementById('formUrl').value.trim();
+  if (!url) { document.getElementById('formAnalysisStatus').textContent = '⚠️ Ingresa la URL del formulario.'; return; }
+
+  const statusEl = document.getElementById('formAnalysisStatus');
+  const spinner  = document.getElementById('analyzeSpinner');
+  spinner.classList.remove('hidden');
+  statusEl.textContent = '⏳ Analizando campos del formulario...';
+  document.getElementById('formFieldsSection').classList.add('hidden');
+
+  try {
+    const res = await fetch('/api/analyze-form', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formUrl: url }),
+    }).then(r => r.json());
+
+    if (!res.success) { statusEl.textContent = '❌ ' + res.error; return; }
+
+    formFields = res.fields;
+    renderFormFields(res.fields);
+    statusEl.textContent = `✅ ${res.fields.length} campo(s) detectados en el formulario.`;
+  } catch (e) {
+    statusEl.textContent = '❌ ' + e.message;
+  } finally {
+    spinner.classList.add('hidden');
+  }
+}
+
+function renderFormFields(fields) {
+  const section = document.getElementById('formFieldsSection');
+  section.innerHTML = '';
+  section.classList.remove('hidden');
+
+  // Field list
+  const box = document.createElement('div');
+  box.className = 'bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2';
+  box.innerHTML = '<p class="text-xs font-semibold text-gray-600 mb-2">Campos detectados en el formulario:</p>';
+
+  fields.forEach(f => {
+    const info = MAPPING_INFO[f.mapping] || { icon: '❓', label: f.mapping, color: '#f3f4f6', text: '#374151' };
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2 text-xs';
+    row.innerHTML = `
+      <span class="font-medium text-gray-700 flex-1">${esc(f.label)}</span>
+      <span style="background:${info.color};color:${info.text}" class="px-2 py-0.5 rounded-full font-medium text-xs shrink-0">${info.icon} ${info.label}</span>`;
+    if (f.description) {
+      row.title = f.description;
+    }
+    box.appendChild(row);
+  });
+  section.appendChild(box);
+
+  // Render required global inputs
+  const hasMappings = (types) => types.some(t => fields.some(f => f.mapping === t));
+
+  if (hasMappings(['text_docente'])) {
+    section.appendChild(makeField(
+      'docente', 'text',
+      '👤 Docente que llena el formulario',
+      'Ej: Arias Pérez Jorge Eduardo'
+    ));
+  }
+  if (hasMappings(['text_acciones', 'informe_completo'])) {
+    section.appendChild(makeTextarea(
+      'acciones',
+      '🛠️ Acciones con estudiantes con dificultades',
+      'Ej: Reunión con padres, clases de recuperación...'
+    ));
+  }
+  if (hasMappings(['text_contenidos', 'informe_completo'])) {
+    const note = document.createElement('p');
+    note.className = 'text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2';
+    note.textContent = '📝 Los contenidos se escriben en cada tarjeta de materia (ya incluidos abajo).';
+    section.appendChild(note);
+  }
+}
+
+function makeField(id, type, label, placeholder) {
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <label class="block text-xs font-medium text-gray-500 mb-1">${label}</label>
+    <input id="${id}" type="${type}" placeholder="${placeholder}"
+      class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm" />`;
+  return div;
+}
+
+function makeTextarea(id, label, placeholder) {
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <label class="block text-xs font-medium text-gray-500 mb-1">${label}</label>
+    <textarea id="${id}" rows="2" placeholder="${placeholder}"
+      class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none text-sm"></textarea>`;
+  return div;
+}
+
+// ── AI auto-detection ─────────────────────────────────────────────────────────
+
+async function autoDetect(id) {
+  const url = document.getElementById(`url-${id}`).value.trim();
+  subjects[id].sheetUrl = url;
+  const errEl = document.getElementById(`err-${id}`);
+  errEl.classList.add('hidden');
+
+  if (!url) { showSubjError(id, 'Ingresa la URL del Sheet.'); return; }
+
+  setStatus(id, '🤖 Analizando estructura con IA...');
+  try {
+    const res = await fetch('/api/analyze-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetUrl: url }),
+    }).then(r => r.json());
+
+    if (!res.success) { showSubjError(id, 'Error IA: ' + res.error); return; }
+
+    // Populate tab selectors first
+    const tabsRes = await fetch('/api/get-tabs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetUrl: url }),
+    }).then(r => r.json());
+
+    if (!tabsRes.success) { showSubjError(id, tabsRes.error); return; }
+
+    subjects[id].tabs = tabsRes.tabs;
+    populateTabSelects(id, tabsRes.tabs);
+    document.getElementById(`config-${id}`).classList.remove('hidden');
+
+    // Set AI-detected tabs
+    document.getElementById(`ctab-${id}`).value = res.contactTab || '';
+    subjects[id].contactTab = res.contactTab || '';
+    document.getElementById(`gtab-${id}`).value = res.gradeTab || '';
+    subjects[id].gradeTab = res.gradeTab || '';
+
+    // Load columns for both tabs in parallel
+    if (res.contactTab) {
+      await loadColumnsInto(id, res.contactTab, ['col-ape', 'col-nom', 'col-curso'], 'contact');
+      document.getElementById(`ccols-${id}`).classList.remove('hidden');
+    }
+    if (res.gradeTab) {
+      await loadColumnsInto(id, res.gradeTab, ['col-gape', 'col-gnom', 'col-nota'], 'grade');
+      document.getElementById(`gcols-${id}`).classList.remove('hidden');
+    }
+
+    // Override auto-select with AI-detected indices
+    const { cols } = res;
+    if (cols) {
+      if (cols.ape != null)      { document.getElementById(`col-ape-${id}`).value  = cols.ape;      subjects[id].cols.ape      = cols.ape; }
+      if (cols.nom != null)      { document.getElementById(`col-nom-${id}`).value  = cols.nom;      subjects[id].cols.nom      = cols.nom; }
+      if (cols.curso != null)    { document.getElementById(`col-curso-${id}`).value = cols.curso;   subjects[id].cols.curso    = cols.curso; }
+      if (cols.gradeApe != null) { document.getElementById(`col-gape-${id}`).value = cols.gradeApe; subjects[id].cols.gradeApe = cols.gradeApe; }
+      if (cols.gradeNom != null) { document.getElementById(`col-gnom-${id}`).value = cols.gradeNom; subjects[id].cols.gradeNom = cols.gradeNom; }
+      if (cols.nota != null)     { document.getElementById(`col-nota-${id}`).value = cols.nota;     subjects[id].cols.nota     = cols.nota; }
+    }
+
+    setStatus(id, `✅ IA detectó: contactos="${res.contactTab}", calificaciones="${res.gradeTab}"`);
+  } catch (e) {
+    showSubjError(id, e.message);
+  }
 }
 
 // ── Tab exploration ───────────────────────────────────────────────────────────
@@ -269,8 +449,6 @@ async function onGradeTabChange(id) {
 
 async function loadAll() {
   document.getElementById('loadError').classList.add('hidden');
-  const docente = document.getElementById('docente').value.trim();
-  if (!docente) { showLoadError('Ingresa el nombre del docente.'); return; }
 
   const configs = Object.entries(subjects).map(([id, s]) => ({
     name: s.name || `Materia ${id}`,
@@ -349,7 +527,7 @@ function toggleDetail(idx) {
     const g = loadedGroups[idx];
     const subj = Object.values(subjects).find(s => s.name === g.materia);
     const contenidos = subj?.contenidos || '(sin contenidos)';
-    document.getElementById(`ft-${idx}`).textContent = buildFormText(contenidos, g.dificultades, document.getElementById('acciones').value.trim());
+    document.getElementById(`ft-${idx}`).textContent = buildFormText(contenidos, g.dificultades, document.getElementById('acciones')?.value.trim() || '');
   }
 }
 
@@ -369,12 +547,20 @@ function buildFormText(contenidos, dificultades, acciones) {
 // ── Submit ────────────────────────────────────────────────────────────────────
 
 async function submitForms() {
-  const docente  = document.getElementById('docente').value.trim();
-  const acciones = document.getElementById('acciones').value.trim();
-  if (!docente) { alert('Ingresa el nombre del docente.'); return; }
+  const docente  = document.getElementById('docente')?.value.trim() || '';
+  const acciones = document.getElementById('acciones')?.value.trim() || '';
+  const formUrl  = document.getElementById('formUrl').value.trim();
+
+  // Validate required fields based on form analysis
+  const needsDocente = formFields.length === 0 || formFields.some(f => f.mapping === 'text_docente');
+  if (needsDocente && !docente) { alert('Ingresa el nombre del docente.'); return; }
+
+  if (!formUrl) { alert('Ingresa y analiza la URL del formulario primero.'); return; }
 
   const toSend = loadedGroups.filter(g => g.dropdownOption);
-  if (!confirm(`Enviar ${toSend.length} formulario(s)?\n(${loadedGroups.length - toSend.length} sin coincidencia serán omitidos)`)) return;
+  const skipped = loadedGroups.length - toSend.length;
+  if (!toSend.length) { alert('No hay cursos con coincidencia en el formulario para enviar.'); return; }
+  if (!confirm(`Enviar ${toSend.length} formulario(s)?${skipped ? `\n(${skipped} omitido(s) sin coincidencia)` : ''}`)) return;
 
   document.getElementById('sendSpinner').classList.remove('hidden');
 
@@ -385,6 +571,9 @@ async function submitForms() {
       dropdownOption: g.dropdownOption,
       docente,
       materia: g.materia,
+      contenidos,
+      acciones,
+      dificultades: g.dificultades,
       formText: buildFormText(contenidos, g.dificultades, acciones),
     };
   });
@@ -393,9 +582,9 @@ async function submitForms() {
     const res = await fetch('/api/submit-forms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submissions }),
+      body: JSON.stringify({ submissions, formUrl, formFields }),
     }).then(r => r.json());
-    renderResults(res.results, loadedGroups.length - toSend.length);
+    renderResults(res.results, skipped);
   } catch (e) {
     alert('Error: ' + e.message);
   } finally {
