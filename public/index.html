@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Informes Finales – Google Form</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+<div class="max-w-4xl mx-auto p-6 space-y-6">
+
+  <!-- Header -->
+  <div class="bg-white rounded-2xl shadow p-6">
+    <h1 class="text-2xl font-bold text-gray-800">📋 Envío de Informes Finales</h1>
+    <p class="text-gray-500 mt-1 text-sm">Llena el formulario automáticamente por cada curso y materia.</p>
+  </div>
+
+  <!-- Auth banner -->
+  <div id="authNeeded" class="hidden bg-yellow-50 border border-yellow-200 rounded-2xl p-5 flex items-center justify-between">
+    <div class="flex items-center gap-3 text-yellow-800">
+      <span class="text-2xl">⚠️</span>
+      <span>Primero autoriza el acceso a Google Sheets.</span>
+    </div>
+    <a href="/auth" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-5 py-2 rounded-xl transition">
+      Autorizar Google
+    </a>
+  </div>
+  <div id="authOk" class="hidden bg-green-50 border border-green-200 rounded-2xl p-4 flex items-center gap-3 text-green-700">
+    <span class="text-xl">✅</span><span>Google Sheets autorizado.</span>
+  </div>
+
+  <!-- Sheet URLs -->
+  <div class="bg-white rounded-2xl shadow p-6">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">📊 URLs de Google Sheets (estudiantes)</h2>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Arreglos Musicales</label>
+        <input id="arreglosUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Ensamble de Guitarras</label>
+        <input id="ensambleUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Guitarra Clásica</label>
+        <input id="guitarraUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Teacher + contenidos -->
+  <div class="bg-white rounded-2xl shadow p-6">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">✏️ Datos del informe</h2>
+    <div class="space-y-4">
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Docente que llena el formulario</label>
+        <input id="docente" type="text" placeholder="Ej: Pérez García Juan Carlos"
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1">Acciones realizadas con estudiantes con dificultades</label>
+        <textarea id="acciones" rows="2" placeholder="Ej: Reunión con padres de familia, clases de recuperación..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"></textarea>
+      </div>
+
+      <hr class="border-gray-100" />
+      <p class="text-sm font-medium text-gray-600">Contenidos trabajados en el 2do quimestre (uno por materia):</p>
+
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Arreglos Musicales</label>
+        <textarea id="contArreglos" rows="2" placeholder="Temas cubiertos en Arreglos Musicales..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"></textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Ensamble de Guitarras</label>
+        <textarea id="contEnsamble" rows="2" placeholder="Temas cubiertos en Ensamble de Guitarras..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"></textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Guitarra Clásica</label>
+        <textarea id="contGuitarra" rows="2" placeholder="Temas cubiertos en Guitarra Clásica..."
+          class="w-full border border-gray-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"></textarea>
+      </div>
+    </div>
+
+    <button onclick="loadData()"
+      class="mt-5 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2">
+      <span id="loadSpinner" class="hidden">⏳</span>
+      Cargar y previsualizar
+    </button>
+    <p id="loadError" class="text-red-600 text-sm mt-3 hidden"></p>
+  </div>
+
+  <!-- Preview groups -->
+  <div id="previewSection" class="hidden">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-base font-semibold text-gray-700">👁 Vista previa por curso</h2>
+      <div class="flex items-center gap-2">
+        <span id="matchWarn" class="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 px-3 py-1 rounded-full hidden">
+          ⚠️ Algunos cursos no se encontraron en el desplegable
+        </span>
+        <button onclick="submitForms()"
+          class="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-2 rounded-xl transition flex items-center gap-2">
+          <span id="sendSpinner" class="hidden">⏳</span>
+          Enviar formularios
+        </button>
+      </div>
+    </div>
+    <div id="previewList" class="space-y-3"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="resultsSection" class="hidden bg-white rounded-2xl shadow p-6">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">📊 Resultado del envío</h2>
+    <div id="resultsList" class="space-y-2"></div>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
