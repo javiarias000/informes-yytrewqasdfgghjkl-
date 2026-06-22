@@ -412,55 +412,113 @@ app.post('/api/load-data', async (req, res) => {
 app.post('/api/analyze-form', async (req, res) => {
   try {
     const { formUrl } = req.body;
-    const viewUrl = formUrl.trim()
-      .replace('/formResponse', '/viewform')
-      .replace(/[?#].*$/, '');
+
+    // Normalize: allow forms.gle, viewform, formResponse — always fetch viewform
+    let viewUrl = formUrl.trim().replace(/[?#].*$/, '');
+    if (!viewUrl.includes('viewform') && !viewUrl.includes('formResponse')) {
+      // short URL like forms.gle/xxx — fetch as-is, axios will follow redirect
+    } else {
+      viewUrl = viewUrl.replace('/formResponse', '/viewform');
+    }
 
     const htmlRes = await axios.get(viewUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+      },
+      timeout: 20000,
+      maxRedirects: 10,
     });
 
     const html = htmlRes.data;
 
-    // Extract FB_PUBLIC_LOAD_DATA_ JSON
+    // ── Extract raw JSON ──────────────────────────────────────────────────────
     const dataStart = html.indexOf('var FB_PUBLIC_LOAD_DATA_ = ');
-    if (dataStart === -1) throw new Error('No se encontró la estructura del formulario en la página');
+    if (dataStart === -1) {
+      console.error('[analyze-form] FB_PUBLIC_LOAD_DATA_ not found. HTML snippet:', html.slice(0, 500));
+      throw new Error('No se encontró la estructura del formulario. Asegúrate de que el link sea público y accesible.');
+    }
 
     const jsonStart = dataStart + 'var FB_PUBLIC_LOAD_DATA_ = '.length;
-    const jsonEnd = html.indexOf(';</script>', jsonStart);
-    if (jsonEnd === -1) throw new Error('No se pudo extraer el JSON del formulario');
+    const jsonEnd   = html.indexOf(';</script>', jsonStart);
+    if (jsonEnd === -1) throw new Error('No se pudo delimitar el JSON del formulario');
 
-    const data = JSON.parse(html.slice(jsonStart, jsonEnd));
+    const rawJson = html.slice(jsonStart, jsonEnd);
+    let data;
+    try { data = JSON.parse(rawJson); }
+    catch (e) { throw new Error('JSON del formulario malformado: ' + e.message); }
 
-    // Recursive scan: a question entry matches [largeNumber, null, "label", null, 0-15, ...]
-    const rawFields = [];
+    // ── Strategy 1: regex over the raw string (catches most Google Forms) ──────
+    // Pattern: [entryId, null, "label", (null|"desc"), typeNum
+    const TYPES = { 0: 'short_text', 1: 'paragraph', 2: 'radio', 3: 'dropdown', 4: 'checkbox', 5: 'scale', 7: 'grid', 9: 'date', 10: 'time' };
     const seen = new Set();
+    const rawFields = [];
+
+    const re = /\[(\d{7,12}),null,"((?:[^"\\]|\\.)*)"/g;
+    let m;
+    while ((m = re.exec(rawJson)) !== null) {
+      const entryId = parseInt(m[1]);
+      const label   = m[2].replace(/\\n/g, ' ').replace(/\\"/g, '"').trim();
+      if (seen.has(entryId) || !label) continue;
+      seen.add(entryId);
+      rawFields.push({ entryId, label, type: 'unknown', choices: [] });
+    }
+
+    // ── Strategy 2: recursive JSON scan (fills in type + choices) ─────────────
     function scan(node, depth) {
-      if (!Array.isArray(node) || depth > 12) return;
+      if (!Array.isArray(node) || depth > 15) return;
       if (
         node.length >= 5 &&
-        typeof node[0] === 'number' && String(node[0]).length >= 8 &&
-        node[1] === null &&
+        typeof node[0] === 'number' && String(Math.abs(node[0])).length >= 7 &&
         typeof node[2] === 'string' && node[2].trim().length > 0 &&
-        typeof node[4] === 'number' && node[4] >= 0 && node[4] <= 15 &&
-        !seen.has(node[0])
+        typeof node[4] === 'number' && node[4] >= 0 && node[4] <= 15
       ) {
-        seen.add(node[0]);
-        const TYPES = { 0: 'short_text', 1: 'paragraph', 2: 'radio', 3: 'dropdown', 4: 'checkbox', 5: 'scale', 9: 'date', 10: 'time' };
+        const existing = rawFields.find(f => f.entryId === node[0]);
         const choices = Array.isArray(node[6])
           ? node[6].filter(c => Array.isArray(c) && c[0]).map(c => String(c[0])).slice(0, 8)
           : [];
-        rawFields.push({ entryId: node[0], label: node[2].trim(), type: TYPES[node[4]] || 'other', choices });
+        if (existing) {
+          existing.type    = TYPES[node[4]] || existing.type;
+          existing.choices = choices.length ? choices : existing.choices;
+          return;
+        }
+        if (!seen.has(node[0])) {
+          seen.add(node[0]);
+          rawFields.push({ entryId: node[0], label: node[2].trim(), type: TYPES[node[4]] || 'other', choices });
+        }
         return;
       }
       for (const child of node) scan(child, depth + 1);
     }
     scan(data, 0);
 
-    if (rawFields.length === 0) throw new Error('No se encontraron campos en el formulario. Verifica que la URL sea correcta.');
+    console.log(`[analyze-form] found ${rawFields.length} fields:`, rawFields.map(f => `${f.entryId}="${f.label}"`));
 
-    // Ask GPT to suggest mappings
+    // ── Strategy 3: if still nothing, let GPT parse the raw JSON ──────────────
+    let fieldsToMap = rawFields;
+    if (rawFields.length === 0) {
+      const parseCompletion = await openai.chat.completions.create({
+        model: 'gpt-4.1-mini',
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: 'Eres experto en parsear FB_PUBLIC_LOAD_DATA_ de Google Forms. Extrae todos los campos (preguntas) con su entryId (número 7-12 dígitos), label y tipo. Responde JSON: {"fields":[{"entryId":number,"label":"...","type":"...","choices":[]}]}',
+          },
+          {
+            role: 'user',
+            content: 'Extrae los campos de este JSON de Google Forms:\n' + rawJson.slice(0, 30000),
+          },
+        ],
+      });
+      const parsed = JSON.parse(parseCompletion.choices[0].message.content);
+      fieldsToMap = parsed.fields || [];
+    }
+
+    if (fieldsToMap.length === 0) throw new Error('No se encontraron campos en el formulario. Verifica que el link sea público.');
+
+    // ── Ask GPT to suggest mappings ───────────────────────────────────────────
     const completion = await openai.chat.completions.create({
       model: 'gpt-4.1-mini',
       response_format: { type: 'json_object' },
@@ -468,23 +526,23 @@ app.post('/api/analyze-form', async (req, res) => {
         {
           role: 'system',
           content: `Eres un experto en formularios escolares de música en Ecuador.
-Analiza los campos del formulario y asigna a cada uno el tipo de dato más apropiado.
+Asigna a cada campo el tipo de dato más apropiado.
 
-Tipos de datos disponibles:
-- "auto_curso": Curso y tutor del estudiante (dropdown, auto-detectado de la hoja de cálculo)
-- "auto_materia": Nombre de la materia musical (tomado del nombre configurado en la app)
-- "text_docente": Nombre del docente (texto que escribe el usuario, UNO solo para todos)
-- "text_contenidos": Contenidos del quimestre (el docente escribe UNO POR MATERIA, va en cada tarjeta de materia)
-- "auto_dificultades": Lista de estudiantes con dificultades académicas (generado automáticamente)
-- "text_acciones": Acciones correctivas con estudiantes en dificultad (texto que escribe el usuario, UNO solo para todos)
-- "informe_completo": Texto completo que combina contenidos + lista de dificultades + acciones en un solo bloque
-- "ignore": Campo que no aplica o debe ignorarse
+Tipos disponibles:
+- "auto_curso": Curso y tutor del estudiante (dropdown, auto-detectado de la hoja)
+- "auto_materia": Nombre de la materia musical (del nombre configurado en la app)
+- "text_docente": Nombre del docente (texto que escribe el usuario, uno para todos)
+- "text_contenidos": Contenidos del quimestre (uno por materia, en cada tarjeta)
+- "auto_dificultades": Lista de estudiantes con dificultades (generado automáticamente)
+- "text_acciones": Acciones correctivas (texto que escribe el usuario, uno para todos)
+- "informe_completo": Texto completo: contenidos + dificultades + acciones combinados
+- "ignore": Campo que no aplica
 
-Responde ÚNICAMENTE con JSON: {"fields": [{"entryId": number, "label": "...", "mapping": "tipo", "description": "qué dato se enviará en español, máximo 10 palabras"}]}`,
+Responde SOLO con JSON: {"fields":[{"entryId":number,"label":"...","mapping":"tipo","description":"qué se enviará, max 10 palabras"}]}`,
         },
         {
           role: 'user',
-          content: `Campos detectados en el formulario:\n${JSON.stringify(rawFields, null, 2)}`,
+          content: `Campos del formulario:\n${JSON.stringify(fieldsToMap, null, 2)}`,
         },
       ],
     });
