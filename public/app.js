@@ -450,15 +450,36 @@ async function onGradeTabChange(id) {
 async function loadAll() {
   document.getElementById('loadError').classList.add('hidden');
 
-  const configs = Object.entries(subjects).map(([id, s]) => ({
-    name: s.name || `Materia ${id}`,
-    sheetUrl: s.sheetUrl,
-    contactTab: s.contactTab,
-    gradeTab: s.gradeTab,
-    cols: s.cols,
-  })).filter(c => c.sheetUrl && c.contactTab && c.gradeTab);
+  // Diagnose what's missing per subject
+  const allEntries = Object.entries(subjects);
+  if (!allEntries.length) { showLoadError('Agrega al menos una materia.'); return; }
 
-  if (!configs.length) { showLoadError('Configura al menos una materia completa.'); return; }
+  const incomplete = allEntries.filter(([, s]) => !s.sheetUrl || !s.contactTab || !s.gradeTab);
+  const configs    = allEntries
+    .filter(([, s]) => s.sheetUrl && s.contactTab && s.gradeTab)
+    .map(([id, s]) => ({
+      name: s.name || `Materia ${id}`,
+      sheetUrl: s.sheetUrl,
+      contactTab: s.contactTab,
+      gradeTab: s.gradeTab,
+      cols: s.cols,
+    }));
+
+  if (!configs.length) {
+    const missing = incomplete.map(([, s]) => {
+      const parts = [];
+      if (!s.sheetUrl)    parts.push('URL de Sheet');
+      if (!s.contactTab)  parts.push('hoja de contactos');
+      if (!s.gradeTab)    parts.push('hoja de calificaciones');
+      return `"${s.name || 'Sin nombre'}": falta ${parts.join(', ')}`;
+    });
+    showLoadError('Falta configurar:\n' + missing.join('\n'));
+    return;
+  }
+
+  if (incomplete.length) {
+    console.warn('[loadAll] Materias incompletas (se omiten):', incomplete.map(([, s]) => s.name));
+  }
 
   document.getElementById('loadSpinner').classList.remove('hidden');
   document.getElementById('previewSection').classList.add('hidden');
@@ -471,6 +492,12 @@ async function loadAll() {
     }).then(r => r.json());
 
     if (!res.success) { showLoadError(res.error); return; }
+
+    if (!res.groups.length) {
+      showLoadError('No se encontraron estudiantes. Verifica las columnas de nombre y nota en cada materia.');
+      return;
+    }
+
     loadedGroups = res.groups;
     renderPreviews(res.groups);
   } catch (e) {
@@ -622,7 +649,9 @@ function showSubjError(id, msg) {
 
 function showLoadError(msg) {
   const el = document.getElementById('loadError');
-  el.textContent = msg; el.classList.remove('hidden');
+  el.textContent = '⚠️ ' + msg;
+  el.classList.remove('hidden');
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function setStatus(id, msg) {
