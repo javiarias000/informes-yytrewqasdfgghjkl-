@@ -248,6 +248,61 @@ async function readStudentSheet(sheets, spreadsheetId) {
   return result;
 }
 
+// ── Configurable student sheet reader ────────────────────────────────────────
+// cfg.cols: { ape, nom (optional), curso, gradeApe, gradeNom (optional), nota }
+// All col values are column indices (numbers)
+
+async function readStudentSheetConfigured(sheets, spreadsheetId, cfg) {
+  const { contactTab, gradeTab, cols } = cfg;
+
+  const contactRows = contactTab ? await readTab(sheets, spreadsheetId, contactTab) : [];
+  const gradeRows   = gradeTab   ? await readTab(sheets, spreadsheetId, gradeTab)   : [];
+
+  // ── Find data start row for grades (skip institutional headers) ────────────
+  let gradeHeaderIdx = 0;
+  for (let i = 0; i < Math.min(gradeRows.length, 15); i++) {
+    if (gradeRows[i].filter(c => c && c.trim()).length > 2) {
+      gradeHeaderIdx = i;
+      break;
+    }
+  }
+
+  // ── Parse contact tab → cursoMap ──────────────────────────────────────────
+  const cursoMap = {}; // normName → { fullName, curso }
+  const contactStart = contactRows.length > 1 ? 1 : 0; // skip header row
+  for (let i = contactStart; i < contactRows.length; i++) {
+    const row = contactRows[i];
+    const ape  = (row[cols.ape]  || '').trim();
+    const nom  = cols.nom != null ? (row[cols.nom] || '').trim() : '';
+    const curso = (row[cols.curso] || '').trim();
+    const full = [ape, nom].filter(Boolean).join(' ');
+    if (full) cursoMap[normName(full)] = { fullName: full, curso };
+  }
+
+  // ── Parse grade tab → noteMap ─────────────────────────────────────────────
+  const noteMap = {}; // normName → nota
+  const gradeStart = gradeHeaderIdx + (gradeRows.length > gradeHeaderIdx + 1 ? 2 : 1);
+  for (let i = gradeStart; i < gradeRows.length; i++) {
+    const row = gradeRows[i];
+    const ape  = (row[cols.gradeApe]  || '').trim();
+    const nom  = cols.gradeNom != null ? (row[cols.gradeNom] || '').trim() : '';
+    const full = [ape, nom].filter(Boolean).join(' ');
+    const noteStr = (row[cols.nota] || '').trim().replace(',', '.');
+    const note = parseFloat(noteStr);
+    if (full && !isNaN(note)) noteMap[normName(full)] = note;
+  }
+
+  // ── Merge ─────────────────────────────────────────────────────────────────
+  const result = {};
+  for (const [norm, { fullName, curso }] of Object.entries(cursoMap)) {
+    const nota = noteMap[norm];
+    if (nota !== undefined) {
+      result[fullName] = { promedio: Math.round(nota * 100) / 100, curso };
+    }
+  }
+  return result;
+}
+
 // ── Form text builder ─────────────────────────────────────────────────────────
 
 function buildFormText(contenidos, dificultades, acciones) {
@@ -271,85 +326,81 @@ function buildFormText(contenidos, dificultades, acciones) {
   return lines.join('\n');
 }
 
-// ── API: load and preview ─────────────────────────────────────────────────────
+// ── API: get tabs of a sheet ──────────────────────────────────────────────────
 
-app.post('/api/load-data', async (req, res) => {
+app.post('/api/get-tabs', async (req, res) => {
   try {
-    const { arreglosUrl, ensambleUrl, guitarraUrl } = req.body;
+    const { sheetUrl } = req.body;
     const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-
-    const [arreglos, ensamble, guitarra] = await Promise.all([
-      readStudentSheet(sheets, extractSheetId(arreglosUrl)),
-      readStudentSheet(sheets, extractSheetId(ensambleUrl)),
-      readStudentSheet(sheets, extractSheetId(guitarraUrl)),
-    ]);
-
-    const subjects = [
-      { name: 'Arreglos Musicales', data: arreglos },
-      { name: 'Ensamble de Guitarras', data: ensamble },
-      { name: 'Guitarra Clásica', data: guitarra },
-    ];
-
-    // Group by (subject, course)
-    const groups = [];
-
-    for (const subj of subjects) {
-      const byCurso = {};
-      for (const [nombre, d] of Object.entries(subj.data)) {
-        const key = d.curso || 'Sin curso';
-        if (!byCurso[key]) byCurso[key] = [];
-        byCurso[key].push({ nombre, promedio: d.promedio });
-      }
-
-      for (const [curso, students] of Object.entries(byCurso)) {
-        const dropdown = findDropdownOption(curso);
-        const dificultades = students.filter(s => s.promedio < 7);
-        groups.push({
-          materia: subj.name,
-          curso,
-          dropdownOption: dropdown,
-          students,
-          dificultades,
-        });
-      }
-    }
-
-    const totals = {
-      arreglos: Object.keys(arreglos).length,
-      ensamble: Object.keys(ensamble).length,
-      guitarra: Object.keys(guitarra).length,
-    };
-    console.log('Estudiantes encontrados:', totals);
-
-    res.json({ success: true, groups, debug: totals });
+    const tabs = await getTabNames(sheets, extractSheetId(sheetUrl));
+    res.json({ success: true, tabs });
   } catch (err) {
-    console.error(err);
     res.json({ success: false, error: err.message });
   }
 });
 
-// ── Debug: show raw headers of Contacto and Anual tabs ───────────────────────
+// ── API: get column headers of a specific tab ─────────────────────────────────
 
-app.post('/api/debug-headers', async (req, res) => {
+app.post('/api/get-columns', async (req, res) => {
   try {
-    const { sheetUrl } = req.body;
+    const { sheetUrl, tab } = req.body;
     const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-    const id = extractSheetId(sheetUrl);
-    const allTabs = await getTabNames(sheets, id);
-    const findTab = kw => allTabs.find(t =>
-      t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(kw)
-    ) || null;
-    const contactTab = findTab('contacto');
-    const anualTab   = findTab('anual');
-    const cRows = contactTab ? await readTab(sheets, id, contactTab) : [];
-    const aRows = anualTab   ? await readTab(sheets, id, anualTab)   : [];
-    res.json({
-      tabs: allTabs,
-      contacto: { tab: contactTab, headers: cRows[0] || [], row1: cRows[1] || [] },
-      anual:    { tab: anualTab,   headers: aRows[0] || [], row1: aRows[1] || [] },
-    });
+    const rows = await readTab(sheets, extractSheetId(sheetUrl), tab);
+
+    // For sheets with institutional headers (like Anual), find the real header row
+    // (first row where more than 2 cells are non-empty)
+    let headerRow = rows[0] || [];
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      const nonEmpty = rows[i].filter(c => c && c.trim()).length;
+      if (nonEmpty > 2) { headerRow = rows[i]; break; }
+    }
+
+    const columns = headerRow.map((label, idx) => ({
+      idx,
+      label: label ? label.trim() : `Columna ${idx + 1}`,
+    })).filter(c => c.label);
+
+    res.json({ success: true, columns });
   } catch (err) {
-    res.json({ error: err.message });
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// ── API: load and preview ─────────────────────────────────────────────────────
+// Body: { subjects: [{ name, sheetUrl, contactTab, gradeTab, cols: { ape, nom, curso, nota } }] }
+
+app.post('/api/load-data', async (req, res) => {
+  try {
+    const { subjects: subjectConfigs } = req.body;
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+
+    const groups = [];
+
+    for (const cfg of subjectConfigs) {
+      const id = extractSheetId(cfg.sheetUrl);
+      const data = await readStudentSheetConfigured(sheets, id, cfg);
+      const byCurso = {};
+      for (const [nombre, d] of Object.entries(data)) {
+        const key = d.curso || 'Sin curso';
+        if (!byCurso[key]) byCurso[key] = [];
+        byCurso[key].push({ nombre, promedio: d.promedio });
+      }
+      for (const [curso, students] of Object.entries(byCurso)) {
+        groups.push({
+          materia: cfg.name,
+          curso,
+          dropdownOption: findDropdownOption(curso),
+          students,
+          dificultades: students.filter(s => s.promedio < 7),
+        });
+      }
+      console.log(`${cfg.name}: ${Object.keys(data).length} estudiantes`);
+    }
+
+    res.json({ success: true, groups });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, error: err.message });
   }
 });
 
