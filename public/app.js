@@ -18,30 +18,63 @@ async function checkAuth() {
 
 // ── Subject cards ─────────────────────────────────────────────────────────────
 
-function addSubject(name = '') {
+function addSubject(name = '', savedState = null) {
   const id = ++subjectCounter;
-  subjects[id] = { name, sheetUrl: '', tabs: [], tabColumns: {}, contactTab: '', gradeTab: '', cols: {} };
+  const enabled = savedState ? savedState.enabled !== false : true;
+  subjects[id] = {
+    name,
+    sheetUrl: savedState?.sheetUrl || '',
+    tabs: [],
+    tabColumns: {},
+    contactTab: savedState?.contactTab || '',
+    gradeTab: savedState?.gradeTab || '',
+    cols: savedState?.cols || {},
+    contenidos: savedState?.contenidos || '',
+    enabled,
+  };
 
   const card = document.createElement('div');
   card.id = `card-${id}`;
-  card.className = 'bg-white rounded-2xl shadow p-5 space-y-3';
-  card.innerHTML = subjectCardHTML(id, name);
+  card.className = `bg-white rounded-2xl shadow p-5 space-y-3 transition-opacity ${enabled ? '' : 'opacity-50'}`;
+  card.innerHTML = subjectCardHTML(id, name, enabled);
   document.getElementById('subjectCards').appendChild(card);
+  return id;
 }
 
-function subjectCardHTML(id, name) {
+function updateCardStyle(id) {
+  const card = document.getElementById(`card-${id}`);
+  const enabled = subjects[id]?.enabled !== false;
+  if (card) card.classList.toggle('opacity-50', !enabled);
+  const label = document.getElementById(`chklabel-${id}`);
+  if (label) {
+    label.textContent = enabled ? 'Activa' : 'Inactiva';
+    label.className = `text-xs font-medium ${enabled ? 'text-green-600' : 'text-gray-400'}`;
+  }
+}
+
+function subjectCardHTML(id, name, enabled = true) {
   return `
     <div class="flex items-center justify-between">
       <input value="${esc(name)}" placeholder="Nombre de la materia (ej: Guitarra Clásica)"
-        oninput="subjects[${id}].name = this.value"
-        class="font-semibold text-gray-700 bg-transparent border-b border-gray-200 focus:outline-none focus:border-blue-400 w-64" />
-      <button onclick="removeSubject(${id})" class="text-gray-300 hover:text-red-400 text-lg leading-none">✕</button>
+        oninput="subjects[${id}].name = this.value; saveToStorage()"
+        class="font-semibold text-gray-700 bg-transparent border-b border-gray-200 focus:outline-none focus:border-blue-400 flex-1 mr-3" />
+      <div class="flex items-center gap-3 shrink-0">
+        <label class="flex items-center gap-1.5 cursor-pointer select-none">
+          <input type="checkbox" id="chk-${id}" ${enabled ? 'checked' : ''}
+            onchange="subjects[${id}].enabled = this.checked; saveToStorage(); updateCardStyle(${id})"
+            class="w-4 h-4 accent-green-500 cursor-pointer" />
+          <span id="chklabel-${id}" class="text-xs font-medium ${enabled ? 'text-green-600' : 'text-gray-400'}">
+            ${enabled ? 'Activa' : 'Inactiva'}
+          </span>
+        </label>
+        <button onclick="removeSubject(${id})" class="text-gray-300 hover:text-red-400 text-lg leading-none">✕</button>
+      </div>
     </div>
 
     <!-- URL + explore -->
     <div class="flex gap-2">
       <input id="url-${id}" type="text" placeholder="URL de Google Sheets..."
-        oninput="subjects[${id}].sheetUrl = this.value"
+        oninput="subjects[${id}].sheetUrl = this.value; saveToStorage()"
         class="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-xs" />
       <button onclick="autoDetect(${id})"
         class="bg-purple-100 hover:bg-purple-200 text-purple-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap">
@@ -80,21 +113,21 @@ function subjectCardHTML(id, name) {
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="block text-xs text-gray-500 mb-1">Apellidos</label>
-            <select id="col-ape-${id}" onchange="subjects[${id}].cols.ape = +this.value"
+            <select id="col-ape-${id}" onchange="subjects[${id}].cols.ape = +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">—</option>
             </select>
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Nombres <span class="text-gray-300">(opcional)</span></label>
-            <select id="col-nom-${id}" onchange="subjects[${id}].cols.nom = this.value === '' ? null : +this.value"
+            <select id="col-nom-${id}" onchange="subjects[${id}].cols.nom = this.value === '' ? null : +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">— ninguna —</option>
             </select>
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Curso / Paralelo</label>
-            <select id="col-curso-${id}" onchange="subjects[${id}].cols.curso = +this.value"
+            <select id="col-curso-${id}" onchange="subjects[${id}].cols.curso = +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">—</option>
             </select>
@@ -108,21 +141,21 @@ function subjectCardHTML(id, name) {
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="block text-xs text-gray-500 mb-1">Apellidos</label>
-            <select id="col-gape-${id}" onchange="subjects[${id}].cols.gradeApe = +this.value"
+            <select id="col-gape-${id}" onchange="subjects[${id}].cols.gradeApe = +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">—</option>
             </select>
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Nombres <span class="text-gray-300">(opcional)</span></label>
-            <select id="col-gnom-${id}" onchange="subjects[${id}].cols.gradeNom = this.value === '' ? null : +this.value"
+            <select id="col-gnom-${id}" onchange="subjects[${id}].cols.gradeNom = this.value === '' ? null : +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">— ninguna —</option>
             </select>
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Nota Final</label>
-            <select id="col-nota-${id}" onchange="subjects[${id}].cols.nota = +this.value"
+            <select id="col-nota-${id}" onchange="subjects[${id}].cols.nota = +this.value; saveToStorage()"
               class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
               <option value="">—</option>
             </select>
@@ -133,8 +166,8 @@ function subjectCardHTML(id, name) {
       <!-- Contenidos de esta materia -->
       <div>
         <label class="block text-xs font-medium text-gray-500 mb-1">Contenidos trabajados en el 2do quimestre</label>
-        <textarea rows="2" placeholder="Temas cubiertos en esta materia..."
-          oninput="subjects[${id}].contenidos = this.value"
+        <textarea id="contenidos-${id}" rows="2" placeholder="Temas cubiertos en esta materia..."
+          oninput="subjects[${id}].contenidos = this.value; saveToStorage()"
           class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"></textarea>
       </div>
 
@@ -147,6 +180,7 @@ function subjectCardHTML(id, name) {
 function removeSubject(id) {
   delete subjects[id];
   document.getElementById(`card-${id}`).remove();
+  saveToStorage();
 }
 
 // ── Form analysis (AI) ───────────────────────────────────────────────────────
@@ -319,6 +353,7 @@ async function autoDetect(id) {
     }
 
     setStatus(id, `✅ IA detectó: contactos="${res.contactTab}", calificaciones="${res.gradeTab}"`);
+    saveToStorage();
   } catch (e) {
     showSubjError(id, e.message);
   }
@@ -435,6 +470,7 @@ async function onContactTabChange(id) {
   if (!tab) return;
   document.getElementById(`ccols-${id}`).classList.remove('hidden');
   await loadColumnsInto(id, tab, ['col-ape', 'col-nom', 'col-curso'], 'contact');
+  saveToStorage();
 }
 
 async function onGradeTabChange(id) {
@@ -443,6 +479,7 @@ async function onGradeTabChange(id) {
   if (!tab) return;
   document.getElementById(`gcols-${id}`).classList.remove('hidden');
   await loadColumnsInto(id, tab, ['col-gape', 'col-gnom', 'col-nota'], 'grade');
+  saveToStorage();
 }
 
 // ── Load all subjects ─────────────────────────────────────────────────────────
@@ -450,12 +487,12 @@ async function onGradeTabChange(id) {
 async function loadAll() {
   document.getElementById('loadError').classList.add('hidden');
 
-  // Diagnose what's missing per subject
-  const allEntries = Object.entries(subjects);
-  if (!allEntries.length) { showLoadError('Agrega al menos una materia.'); return; }
+  // Only process enabled subjects
+  const enabledEntries = Object.entries(subjects).filter(([, s]) => s.enabled !== false);
+  if (!enabledEntries.length) { showLoadError('Activa al menos una materia con el checkbox "Activa".'); return; }
 
-  const incomplete = allEntries.filter(([, s]) => !s.sheetUrl || !s.contactTab || !s.gradeTab);
-  const configs    = allEntries
+  const incomplete = enabledEntries.filter(([, s]) => !s.sheetUrl || !s.contactTab || !s.gradeTab);
+  const configs    = enabledEntries
     .filter(([, s]) => s.sheetUrl && s.contactTab && s.gradeTab)
     .map(([id, s]) => ({
       name: s.name || `Materia ${id}`,
@@ -493,15 +530,15 @@ async function loadAll() {
 
     if (!res.success) { showLoadError(res.error); return; }
 
-    if (!res.groups.length) {
-      showLoadError('No se encontraron estudiantes. Verifica las columnas de nombre y nota en cada materia.');
+    if (!res.groups || !res.groups.length) {
+      showLoadError('No se encontraron estudiantes. Verifica las columnas seleccionadas.');
       return;
     }
 
     loadedGroups = res.groups;
     renderPreviews(res.groups);
   } catch (e) {
-    showLoadError(e.message);
+    showLoadError('Error de red: ' + e.message);
   } finally {
     document.getElementById('loadSpinner').classList.add('hidden');
   }
@@ -654,6 +691,18 @@ function showLoadError(msg) {
   el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function showDebug(msg) {
+  let el = document.getElementById('debugPanel');
+  if (!el) {
+    el = document.createElement('pre');
+    el.id = 'debugPanel';
+    el.style.cssText = 'background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:10px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:8px;max-height:300px;overflow:auto';
+    document.getElementById('loadError').insertAdjacentElement('afterend', el);
+  }
+  el.textContent = msg;
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function setStatus(id, msg) {
   const el = document.getElementById(`status-${id}`);
   if (el) el.textContent = msg;
@@ -663,7 +712,107 @@ function esc(s) {
   return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ── Persistencia localStorage ─────────────────────────────────────────────────
+
+function saveToStorage() {
+  try {
+    const data = {};
+    for (const [id, s] of Object.entries(subjects)) {
+      data[id] = {
+        name:       s.name,
+        sheetUrl:   s.sheetUrl,
+        contactTab: s.contactTab,
+        gradeTab:   s.gradeTab,
+        cols:       s.cols,
+        contenidos: s.contenidos || '',
+        enabled:    s.enabled !== false,
+      };
+    }
+    localStorage.setItem('informes_subjects', JSON.stringify(data));
+    localStorage.setItem('informes_counter',  String(subjectCounter));
+    const fu = document.getElementById('formUrl')?.value;
+    if (fu) localStorage.setItem('informes_formUrl', fu);
+  } catch (e) { console.warn('save failed', e); }
+}
+
+async function loadFromStorage() {
+  try {
+    const saved = localStorage.getItem('informes_subjects');
+    if (!saved) return false;
+    const data = JSON.parse(saved);
+    if (!Object.keys(data).length) return false;
+
+    subjectCounter = parseInt(localStorage.getItem('informes_counter') || '0');
+
+    for (const [id, s] of Object.entries(data)) {
+      const numId = parseInt(id);
+      const cardId = addSubject(s.name || '', s);
+
+      // Restore URL input text
+      const urlEl = document.getElementById(`url-${cardId}`);
+      if (urlEl && s.sheetUrl) urlEl.value = s.sheetUrl;
+
+      // Restore contenidos
+      const contEl = document.getElementById(`contenidos-${cardId}`);
+      if (contEl && s.contenidos) contEl.value = s.contenidos;
+
+      // Restore tab config panel if tabs were selected
+      if (s.contactTab || s.gradeTab) {
+        document.getElementById(`config-${cardId}`).classList.remove('hidden');
+
+        // Add saved tab as option so selector shows it
+        for (const [prefix, tabVal] of [['ctab', s.contactTab], ['gtab', s.gradeTab]]) {
+          if (!tabVal) continue;
+          const sel = document.getElementById(`${prefix}-${cardId}`);
+          if (!sel) continue;
+          sel.innerHTML = `<option value="${esc(tabVal)}" selected>${esc(tabVal)}</option>`;
+        }
+
+        // Restore column sections
+        if (s.contactTab && s.cols) {
+          document.getElementById(`ccols-${cardId}`).classList.remove('hidden');
+          restoreColSelect(`col-ape-${cardId}`,   s.cols.ape);
+          restoreColSelect(`col-nom-${cardId}`,   s.cols.nom);
+          restoreColSelect(`col-curso-${cardId}`, s.cols.curso);
+        }
+        if (s.gradeTab && s.cols) {
+          document.getElementById(`gcols-${cardId}`).classList.remove('hidden');
+          restoreColSelect(`col-gape-${cardId}`, s.cols.gradeApe);
+          restoreColSelect(`col-gnom-${cardId}`, s.cols.gradeNom);
+          restoreColSelect(`col-nota-${cardId}`, s.cols.nota);
+        }
+
+        setStatus(cardId, '📂 Configuración restaurada. Usa Auto-detectar para refrescar columnas.');
+      }
+    }
+
+    // Restore formUrl
+    const fu = localStorage.getItem('informes_formUrl');
+    if (fu) {
+      const fuEl = document.getElementById('formUrl');
+      if (fuEl) fuEl.value = fu;
+    }
+
+    return true;
+  } catch (e) {
+    console.warn('restore failed', e);
+    return false;
+  }
+}
+
+function restoreColSelect(selId, val) {
+  const sel = document.getElementById(selId);
+  if (!sel || val == null) return;
+  const label = sel.querySelector('option[value=""]')?.textContent || '—';
+  sel.innerHTML = `<option value="">${label}</option><option value="${val}" selected>Col. ${parseInt(val) + 1} (guardado)</option>`;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 checkAuth();
-INITIAL_SUBJECTS.forEach(name => addSubject(name));
+loadFromStorage().then(restored => {
+  if (!restored) INITIAL_SUBJECTS.forEach(name => addSubject(name));
+});
+
+// Save formUrl when user types it
+document.getElementById('formUrl').addEventListener('input', saveToStorage);
