@@ -53,14 +53,20 @@ function renderSheetList() {
     header.innerHTML = `
       <div class="min-w-0 flex-1">
         <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">${esc(first.institution || 'Hoja de calificaciones')}</span>
-        <span class="ml-2 text-xs text-gray-400 font-mono truncate">${esc(shortUrl(url))}</span>
-      </div>
-      <div class="flex gap-2 ml-2">
-        ${first.materia
-          ? `<span class="text-xs text-indigo-600 font-medium">${esc(first.materia)}</span>`
+        ${first.docenteNombre
+          ? `<span class="ml-2 text-xs font-semibold text-indigo-700">👤 ${esc(first.docenteNombre)}</span>`
           : ''}
+        ${first.materia
+          ? `<span class="ml-2 text-xs text-gray-500">${esc(first.materia)}</span>`
+          : ''}
+      </div>
+      <div class="flex gap-2 ml-2 shrink-0">
+        ${(() => {
+          const d = first.docenteNombre ? docentes.find(d => d.nombre === first.docenteNombre) : null;
+          return d?.celular ? `<span class="text-xs text-green-600">📱 ${esc(d.celular)}</span>` : '';
+        })()}
         <button onclick="deleteSheetGroup('${esc(url)}')"
-          class="text-gray-300 hover:text-red-400 text-sm" title="Eliminar esta hoja y todos sus tabs">✕</button>
+          class="text-gray-300 hover:text-red-400 text-sm" title="Eliminar">✕</button>
       </div>`;
     list.appendChild(header);
 
@@ -179,9 +185,10 @@ function closeAddSheet() {
 }
 
 async function confirmAddSheet() {
-  const rawUrl  = document.getElementById('newSheetUrl').value.trim();
-  const materia = document.getElementById('newSheetMateria').value.trim();
-  const url     = rawUrl.replace(/[?#].*$/, '').trim();
+  const rawUrl        = document.getElementById('newSheetUrl').value.trim();
+  const materia       = document.getElementById('newSheetMateria').value.trim();
+  const docenteNombre = document.getElementById('newSheetDocente')?.value.trim() || '';
+  const url           = rawUrl.replace(/[?#].*$/, '').trim();
   const errEl   = document.getElementById('addSheetError');
   const statEl  = document.getElementById('addSheetStatus');
 
@@ -230,11 +237,12 @@ async function confirmAddSheet() {
         id,
         url,
         groupId,
-        tabName:     tab,
-        materia:     materia || '',
-        contactTab:  res.contactTab || 'Contacto',
-        institution: res.format || '',
-        contenidos:  '',
+        tabName:        tab,
+        materia:        materia || '',
+        docenteNombre:  docenteNombre,
+        contactTab:     res.contactTab || 'Contacto',
+        institution:    res.format || '',
+        contenidos:     '',
       });
       sheetData[id] = { status: 'idle', groups: [], contenidos: '' };
       enabledIds.add(id);
@@ -355,26 +363,55 @@ async function loadTabTable(id) {
 }
 
 function buildTableHTML(tt) {
-  const gradeCol = tt.columns[tt.columns.length - 1]; // last col = grade/promedio
-  const rows = tt.data.map(row => {
-    const grade = parseFloat(row[gradeCol]) || 0;
-    const low   = grade > 0 && grade < 7;
-    return `<tr class="${low ? 'bg-red-50' : ''}">
-      ${tt.columns.map(c => {
-        const isGrade = c === gradeCol;
-        return `<td class="border border-gray-200 px-2 py-1 text-xs ${isGrade ? 'font-bold text-center ' + (low ? 'text-red-700' : 'text-green-700') : 'text-gray-700'}">${esc(row[c] || '')}</td>`;
-      }).join('')}
+  const gradeCol = tt.columns[tt.columns.length - 1]; // last col = promedio/nota
+
+  // Group rows by Curso for a cleaner display
+  const byCurso = {};
+  for (const row of tt.data) {
+    const c = row['Curso'] || '—';
+    if (!byCurso[c]) byCurso[c] = [];
+    byCurso[c].push(row);
+  }
+
+  // Columns excluding Curso (shown as group header instead)
+  const dataCols = tt.columns.filter(c => c !== 'Curso');
+
+  let tbody = '';
+  for (const [curso, students] of Object.entries(byCurso)) {
+    // Curso group header row
+    tbody += `<tr class="bg-indigo-50">
+      <td colspan="${dataCols.length}" class="px-3 py-1.5 text-xs font-bold text-indigo-700 border border-gray-200">
+        📚 ${esc(curso)} — ${students.length} estudiante${students.length !== 1 ? 's' : ''}
+      </td>
     </tr>`;
-  }).join('');
+
+    for (const row of students) {
+      const grade = parseFloat(row[gradeCol]) || 0;
+      const low   = grade > 0 && grade < 7;
+      tbody += `<tr class="${low ? 'bg-red-50' : 'hover:bg-gray-50'}">
+        ${dataCols.map(c => {
+          const isGrade = c === gradeCol;
+          const val     = row[c] || '';
+          let cls = 'border border-gray-200 px-2 py-1 text-xs text-gray-700';
+          if (isGrade) cls += low
+            ? ' font-bold text-center text-red-700 bg-red-100'
+            : ' font-bold text-center text-green-700 bg-green-50';
+          return `<td class="${cls}">${esc(val)}</td>`;
+        }).join('')}
+      </tr>`;
+    }
+  }
+
+  const headers = dataCols.map(c =>
+    `<th class="border border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-600 whitespace-nowrap bg-gray-100">${esc(c)}</th>`
+  ).join('');
 
   return `
-    <p class="text-xs font-semibold text-gray-500 mb-1">${esc(tt.label || '')} — ${tt.data.length} estudiantes</p>
+    <p class="text-xs font-semibold text-gray-500 mb-1">${esc(tt.label || '')} — ${tt.data.length} estudiantes · ${Object.keys(byCurso).length} cursos</p>
     <div class="overflow-x-auto rounded-xl border border-gray-200 mb-2">
       <table class="w-full text-xs border-collapse">
-        <thead class="bg-gray-100 sticky top-0">
-          <tr>${tt.columns.map(c => `<th class="border border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-600 whitespace-nowrap">${esc(c)}</th>`).join('')}</tr>
-        </thead>
-        <tbody>${rows}</tbody>
+        <thead><tr>${headers}</tr></thead>
+        <tbody>${tbody}</tbody>
       </table>
     </div>`;
 }
@@ -719,6 +756,221 @@ async function loadFromStorage() {
 
 document.getElementById('formUrl').addEventListener('input', save);
 
+// ── WhatsApp / Evolution API ───────────────────────────────────────────────────
+let waInstance  = localStorage.getItem('wa_instance') || '';
+let docentes    = []; // loaded from server
+let waConnected = false;
+let waPollTimer = null;
+
+async function initWa() {
+  // Load docentes list
+  try {
+    const res = await fetch(API + 'api/docentes').then(r => r.json());
+    docentes = res.docentes || [];
+    const dl = document.getElementById('docentesList');
+    dl.innerHTML = docentes.map(d => `<option value="${esc(d.nombre)}" data-phone="${d.celular}">`).join('');
+  } catch(e) {}
+
+  if (waInstance) await checkWaStatusSilent();
+}
+
+function openWaSetup() {
+  document.getElementById('waSetupForm').classList.toggle('hidden');
+  if (waInstance) document.getElementById('waInstanceName').value = waInstance;
+}
+
+async function connectWa() {
+  const name = document.getElementById('waInstanceName').value.trim();
+  const errEl = document.getElementById('waSetupError');
+  if (!name) { errEl.textContent = 'Ingresa un nombre.'; errEl.classList.remove('hidden'); return; }
+  errEl.classList.add('hidden');
+
+  waInstance = name;
+  localStorage.setItem('wa_instance', name);
+
+  const res = await fetch(API + 'api/wa/instance', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instanceName: name }),
+  }).then(r => r.json());
+
+  document.getElementById('waSetupForm').classList.add('hidden');
+
+  if (!res.success) {
+    setWaStatus('error', res.error);
+    return;
+  }
+
+  if (res.qr) {
+    // Show QR
+    document.getElementById('waQrImg').src = res.qr.startsWith('data:') ? res.qr : 'data:image/png;base64,' + res.qr;
+    document.getElementById('waQrSection').classList.remove('hidden');
+    document.getElementById('waConnected').classList.add('hidden');
+    setWaStatus('qr', 'Escanea el QR');
+    startWaPoll(name);
+  } else {
+    await pollWaStatus();
+  }
+}
+
+function startWaPoll(name) {
+  clearInterval(waPollTimer);
+  let attempts = 0;
+  waPollTimer = setInterval(async () => {
+    attempts++;
+    const connected = await checkWaStatusSilent();
+    if (connected || attempts > 40) clearInterval(waPollTimer);
+  }, 3000);
+}
+
+async function pollWaStatus() {
+  await checkWaStatusSilent();
+}
+
+async function checkWaStatusSilent() {
+  if (!waInstance) return false;
+  try {
+    const res = await fetch(API + 'api/wa/status/' + encodeURIComponent(waInstance)).then(r => r.json());
+    const connected = res.state === 'open';
+    if (connected) {
+      clearInterval(waPollTimer);
+      setWaStatus('connected', waInstance);
+    } else if (res.state === 'connecting' || res.state === 'close') {
+      if (!document.getElementById('waQrSection').classList.contains('hidden')) {
+        // Still showing QR — keep polling
+      } else {
+        setWaStatus('disconnected', '');
+      }
+    }
+    return connected;
+  } catch(e) { return false; }
+}
+
+function setWaStatus(status, label) {
+  const badge     = document.getElementById('waStatusBadge');
+  const connected = document.getElementById('waConnected');
+  const qr        = document.getElementById('waQrSection');
+  const setupBtn  = document.getElementById('waBtnSetup');
+  const instLabel = document.getElementById('waInstanceLabel');
+  const waAllBtn  = document.getElementById('waSendAllBtn');
+
+  waConnected = status === 'connected';
+  waAllBtn?.classList.toggle('hidden', !waConnected);
+
+  if (status === 'connected') {
+    badge.textContent = '✅ Conectado';
+    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700';
+    connected.classList.remove('hidden');
+    qr.classList.add('hidden');
+    instLabel.textContent = 'Instancia: ' + label;
+    setupBtn.textContent = 'Reconectar';
+  } else if (status === 'qr') {
+    badge.textContent = '⏳ Esperando escaneo';
+    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700';
+    connected.classList.add('hidden');
+    setupBtn.textContent = 'Configurar';
+  } else if (status === 'error') {
+    badge.textContent = '❌ Error: ' + label;
+    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600';
+  } else {
+    badge.textContent = 'No conectado';
+    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500';
+    connected.classList.add('hidden');
+    setupBtn.textContent = 'Configurar';
+  }
+}
+
+function disconnectWa() {
+  waInstance = '';
+  localStorage.removeItem('wa_instance');
+  clearInterval(waPollTimer);
+  setWaStatus('disconnected', '');
+  document.getElementById('waConnected').classList.add('hidden');
+  document.getElementById('waQrSection').classList.add('hidden');
+}
+
+// ── Docente picker ─────────────────────────────────────────────────────────────
+function onDocenteInput(val) {
+  const d = docentes.find(d => d.nombre.toLowerCase() === val.toLowerCase());
+  const phoneDiv = document.getElementById('docentePhone');
+  const phoneVal = document.getElementById('docentePhoneVal');
+  if (d?.celular) {
+    phoneDiv.classList.remove('hidden');
+    phoneVal.textContent = d.celular;
+  } else {
+    phoneDiv.classList.add('hidden');
+  }
+}
+
+function getSelectedDocente() {
+  const name = document.getElementById('newSheetDocente')?.value.trim() || '';
+  return docentes.find(d => d.nombre.toLowerCase() === name.toLowerCase()) || null;
+}
+
+// ── WhatsApp sending ──────────────────────────────────────────────────────────
+function buildWaMessage(sheetGroups, docenteName, tabName) {
+  const periodo = tabName || 'Período';
+  const lines = [
+    `*📋 INFORME DE CALIFICACIONES — ${periodo}*`,
+    `_Conservatorio Bolívar de Ambato_`,
+    ``,
+    `Estimado/a *${docenteName}*,`,
+    `Su informe académico ha sido registrado. Resumen:`,
+    ``,
+  ];
+
+  for (const g of sheetGroups) {
+    lines.push(`📚 *${g.curso}* — ${g.students.length} estudiante${g.students.length !== 1 ? 's' : ''}`);
+    if (g.dificultades.length) {
+      lines.push(`   ⚠️ Con dificultades:`);
+      g.dificultades.forEach(d => lines.push(`   • ${d.nombre} (${d.promedio}/10)`));
+    } else {
+      lines.push(`   ✅ Sin dificultades`);
+    }
+    lines.push('');
+  }
+  lines.push(`✅ _Formulario institucional enviado correctamente._`);
+  return lines.join('\n');
+}
+
+async function sendWhatsAppAll() {
+  if (!waConnected) { alert('Conecta WhatsApp primero.'); return; }
+  if (!loadedGroups.length) { alert('Carga los datos primero.'); return; }
+
+  // Group loadedGroups by sheetId → find docente per sheet
+  const bySheet = {};
+  for (const g of loadedGroups) {
+    if (!bySheet[g.sheetId]) bySheet[g.sheetId] = [];
+    bySheet[g.sheetId].push(g);
+  }
+
+  const results = [];
+  for (const [sheetId, groups] of Object.entries(bySheet)) {
+    const sheet   = savedSheets.find(s => s.id === sheetId);
+    const docente = sheet?.docenteNombre ? docentes.find(d => d.nombre === sheet.docenteNombre) : null;
+
+    if (!docente?.celular) {
+      results.push({ label: sheet?.tabName || sheetId, success: false, error: 'Sin número de docente' });
+      continue;
+    }
+
+    const msg = buildWaMessage(groups, docente.nombre, sheet.tabName);
+    const res = await fetch(API + 'api/wa/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instanceName: waInstance, phone: docente.celular, message: msg }),
+    }).then(r => r.json());
+
+    results.push({
+      label:   `${docente.nombre} (${sheet?.tabName})`,
+      success: res.success,
+      error:   res.error,
+    });
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  renderResults(results, 0);
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 checkAuth();
 loadFromStorage();
+initWa();

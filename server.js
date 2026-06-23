@@ -5,6 +5,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
+const XLSX = require('xlsx');
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,39 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ── Evolution API ─────────────────────────────────────────────────────────────
+const EVO_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
+const EVO_KEY = process.env.EVOLUTION_API_KEY || '';
+const evoH    = { apikey: EVO_KEY, 'Content-Type': 'application/json' };
+
+function normalizePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return null;
+  if (digits.startsWith('593')) return digits;
+  if (digits.startsWith('0'))   return '593' + digits.slice(1);
+  if (digits.length === 9)      return '593' + digits; // missing leading 0
+  return digits;
+}
+
+// ── Docentes loader ───────────────────────────────────────────────────────────
+const DOCENTES_XLSX = path.join(__dirname, 'Datos', 'DATOS DOCENTES 2025 Conservatorio Bolívar.xlsx');
+
+function loadDocentes() {
+  if (!fs.existsSync(DOCENTES_XLSX)) return [];
+  const wb   = XLSX.readFile(DOCENTES_XLSX);
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets['GENERAL'], { header: 1, defval: '' });
+  return rows.slice(3)
+    .filter(r => r[1] && String(r[1]).trim())
+    .map(r => ({
+      nombre:              String(r[1]).trim(),
+      cargo:               String(r[4]).trim(),
+      celular:             normalizePhone(r[7]),
+      correoInstitucional: String(r[5]).trim().replace(/\s/g, ''),
+      correoPersonal:      String(r[6]).trim().replace(/\s/g, ''),
+    }))
+    .filter(d => d.celular);
+}
 
 // ── OAuth setup ───────────────────────────────────────────────────────────────
 
@@ -574,6 +608,63 @@ Responde SOLO con JSON: {"fields":[{"entryId":number,"label":"...","mapping":"ti
   }
 });
 
+// ── API: docentes ────────────────────────────────────────────────────────────
+app.get('/api/docentes', (_req, res) => {
+  res.json({ docentes: loadDocentes() });
+});
+
+// ── API: WhatsApp / Evolution API ─────────────────────────────────────────────
+
+// Crear o conectar instancia → devuelve QR en base64
+app.post('/api/wa/instance', async (req, res) => {
+  const { instanceName } = req.body;
+  if (!instanceName) return res.json({ success: false, error: 'Falta instanceName' });
+  try {
+    // Try to create; if already exists Evolution returns an error — we ignore it
+    await axios.post(`${EVO_URL}/instance/create`, {
+      instanceName,
+      qrcode:      true,
+      integration: 'WHATSAPP-BAILEYS',
+    }, { headers: evoH }).catch(() => {});
+
+    // Fetch QR / connection info
+    const r = await axios.get(`${EVO_URL}/instance/connect/${instanceName}`, { headers: evoH });
+    const payload = r.data;
+    // Evolution v1 wraps in { qrcode: { base64, pairingCode } }; v2 may differ
+    const base64 = payload?.qrcode?.base64 || payload?.base64 || null;
+    res.json({ success: true, qr: base64, raw: payload });
+  } catch (e) {
+    res.json({ success: false, error: e.response?.data?.message || e.message });
+  }
+});
+
+// Estado de la instancia
+app.get('/api/wa/status/:instance', async (req, res) => {
+  try {
+    const r = await axios.get(`${EVO_URL}/instance/connectionState/${req.params.instance}`, { headers: evoH });
+    const state = r.data?.instance?.state || r.data?.state || r.data?.connectionStatus || 'unknown';
+    res.json({ success: true, state });
+  } catch (e) {
+    res.json({ success: false, state: 'close', error: e.message });
+  }
+});
+
+// Enviar mensaje de texto
+app.post('/api/wa/send', async (req, res) => {
+  const { instanceName, phone, message } = req.body;
+  if (!instanceName || !phone || !message)
+    return res.json({ success: false, error: 'Faltan parámetros' });
+  try {
+    const r = await axios.post(`${EVO_URL}/message/sendText/${instanceName}`,
+      { number: phone, text: message },
+      { headers: evoH }
+    );
+    res.json({ success: true, data: r.data });
+  } catch (e) {
+    res.json({ success: false, error: e.response?.data?.message || e.message });
+  }
+});
+
 // ── API: submit forms ─────────────────────────────────────────────────────────
 
 app.post('/api/submit-forms', async (req, res) => {
@@ -857,28 +948,62 @@ app.post('/api/tab-table', async (req, res) => {
     if (!cfg) return res.json({ success: false, error: `Tab "${tabName}" no mapeado` });
 
     const sheetsApi = google.sheets({ version: 'v4', auth: oauth2Client });
-    const rows = await readTab(sheetsApi, extractSheetId(sheetUrl), tabName);
+    const sheetId   = extractSheetId(sheetUrl);
 
-    const headerRowIdx = cfg.headerRow;
-    const dataStart    = cfg.dataStartRow;
-    const skipSet      = new Set(cfg.skipRows || []);
+    // Read grade tab and Contacto tab in parallel
+    const [rows, contactoRows] = await Promise.all([
+      readTab(sheetsApi, sheetId, tabName),
+      readTab(sheetsApi, sheetId, 'Contacto').catch(() => []),
+    ]);
 
-    // Columns to show: all except "No"
-    const displayCols = cfg.columns.filter(c => c.name !== 'No');
-    const colNames    = displayCols.map(c => c.name);
+    // Build name → curso map from Contacto
+    const contactoCfg = map.sheets['Contacto'];
+    const cApe   = contactoCfg?.columns.find(c => c.name === 'Apellidos')?.index ?? 1;
+    const cNom   = contactoCfg?.columns.find(c => c.name === 'Nombres')?.index   ?? 2;
+    const cCurso = contactoCfg?.columns.find(c => c.name === 'Curso')?.index     ?? 7;
+    const cStart = contactoCfg?.dataStartRow ?? 1;
+
+    const cursoMap = {}; // normName → curso
+    for (let i = cStart; i < contactoRows.length; i++) {
+      const r   = contactoRows[i];
+      const ape = (r[cApe]   || '').trim();
+      const nom = (r[cNom]   || '').trim();
+      const cur = (r[cCurso] || '').trim();
+      if (ape && cur) cursoMap[normName(`${ape} ${nom}`)] = cur;
+    }
+
+    const dataStart = cfg.dataStartRow;
+    const skipSet   = new Set(cfg.skipRows || []);
+
+    // Columns: Curso first, then all grade cols except "No"
+    const gradeCols = cfg.columns.filter(c => c.name !== 'No');
+    const colNames  = ['Curso', ...gradeCols.map(c => c.name)];
+
+    const apeIdx = cfg.columns.find(c => c.name === 'Apellidos')?.index ?? 1;
+    const nomIdx = cfg.columns.find(c => c.name === 'Nombres')?.index   ?? 2;
 
     const data = [];
     for (let i = dataStart; i < rows.length; i++) {
       if (skipSet.has(i)) continue;
       const row = rows[i];
-      const apellidos = (row[cfg.columns.find(c => c.name === 'Apellidos')?.index] || '').trim();
-      if (!apellidos) continue;
-      const entry = {};
-      for (const col of displayCols) {
+      const ape = (row[apeIdx] || '').trim();
+      if (!ape) continue;
+      const nom = (row[nomIdx] || '').trim();
+      const key = normName(`${ape} ${nom}`);
+
+      const entry = { Curso: cursoMap[key] || '—' };
+      for (const col of gradeCols) {
         entry[col.name] = (row[col.index] || '').trim();
       }
       data.push(entry);
     }
+
+    // Sort by Curso then Apellidos
+    data.sort((a, b) => {
+      const cc = (a.Curso || '').localeCompare(b.Curso || '', 'es');
+      if (cc !== 0) return cc;
+      return (a.Apellidos || '').localeCompare(b.Apellidos || '', 'es');
+    });
 
     res.json({ success: true, label: cfg.label, columns: colNames, data });
   } catch (err) {
