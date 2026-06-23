@@ -765,6 +765,17 @@ async function loadFromStorage() {
 
 document.getElementById('formUrl').addEventListener('input', save);
 
+// ── Navigation ─────────────────────────────────────────────────────────────────
+function showSection(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const view = document.getElementById('view-' + name);
+  const nav  = document.getElementById('nav-' + name);
+  if (view) view.classList.add('active');
+  if (nav)  nav.classList.add('active');
+  if (name === 'historial') loadHistory();
+}
+
 // ── Historial de envíos ────────────────────────────────────────────────────────
 let historialData = [];
 
@@ -772,61 +783,127 @@ async function loadHistory() {
   try {
     const res = await fetch(API + 'api/submissions').then(r => r.json());
     historialData = res.submissions || [];
-    renderHistory();
+    filterHistory();
   } catch(e) {}
 }
 
-function renderHistory() {
-  const section = document.getElementById('historialSection');
-  const list    = document.getElementById('historialList');
-  if (!historialData.length) { section.classList.add('hidden'); return; }
-  section.classList.remove('hidden');
+function filterHistory() {
+  const q      = (document.getElementById('historialSearch')?.value || '').toLowerCase();
+  const filter = document.getElementById('historialFilter')?.value || 'all';
 
-  list.innerHTML = historialData.map(s => {
-    const date   = new Date(s.sentAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
-    const waOk   = !!s.waSentAt;
-    const waDate = waOk ? new Date(s.waSentAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' }) : null;
-    const canWa  = waConnected && s.docentePhone && !waOk;
+  let data = historialData.filter(s => {
+    const text = [s.curso, s.materia, s.docenteNombre, s.docente, s.tabName].join(' ').toLowerCase();
+    if (q && !text.includes(q)) return false;
+    if (filter === 'wa-pending') return !s.waSentAt;
+    if (filter === 'wa-sent')    return !!s.waSentAt;
+    return true;
+  });
 
-    return `<div class="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50">
-      <div class="flex-1 min-w-0">
-        <div class="flex flex-wrap items-center gap-1.5">
-          ${s.tabName ? `<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">${esc(s.tabName)}</span>` : ''}
-          <span class="text-xs font-semibold text-gray-800">${esc(s.curso)}</span>
-          ${s.materia ? `<span class="text-xs text-gray-400">· ${esc(s.materia)}</span>` : ''}
-        </div>
-        <div class="flex flex-wrap items-center gap-2 mt-0.5">
-          ${s.docenteNombre ? `<span class="text-xs text-gray-500">👤 ${esc(s.docenteNombre)}</span>` : ''}
-          <span class="text-xs text-gray-400">${date}</span>
-          ${s.dificultades?.length ? `<span class="text-xs text-orange-600">⚠️ ${s.dificultades.length} dificultad(es)</span>` : ''}
-        </div>
+  renderHistory(data);
+}
+
+function renderHistory(data) {
+  if (!data) data = historialData;
+  const list     = document.getElementById('historialList');
+  const emptyEl  = document.getElementById('historialEmpty');
+
+  // Stats (always from full data)
+  const total      = historialData.length;
+  const waSent     = historialData.filter(s => s.waSentAt).length;
+  const waPending  = historialData.filter(s => !s.waSentAt).length;
+  const setEl = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setEl('statTotal',     total);
+  setEl('statWaSent',    waSent);
+  setEl('statWaPending', waPending);
+
+  if (!list) return;
+
+  if (!data.length) {
+    list.innerHTML = '';
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    return;
+  }
+  if (emptyEl) emptyEl.classList.add('hidden');
+
+  // Group by date
+  const byDate = {};
+  for (const s of data) {
+    const d = new Date(s.sentAt).toLocaleDateString('es-EC', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(s);
+  }
+
+  list.innerHTML = Object.entries(byDate).map(([date, items]) => `
+    <div class="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">${date}</div>
+    ${items.map(s => historialRow(s)).join('')}
+  `).join('');
+}
+
+function historialRow(s) {
+  const date   = new Date(s.sentAt).toLocaleTimeString('es-EC', { hour:'2-digit', minute:'2-digit' });
+  const waOk   = !!s.waSentAt;
+  const waTime = waOk ? new Date(s.waSentAt).toLocaleTimeString('es-EC', { hour:'2-digit', minute:'2-digit' }) : null;
+  const canWa  = waConnected && s.docentePhone && !waOk;
+  const canForm = !!s.formUrl;
+  const sentCount = s.formSentCount || 1;
+
+  return `<div class="flex flex-wrap items-center gap-2 px-4 py-3 hover:bg-gray-50 transition border-b border-gray-100 last:border-0">
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center gap-1.5">
+        ${s.tabName ? `<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">${esc(s.tabName)}</span>` : ''}
+        <span class="text-sm font-semibold text-gray-800">${esc(s.curso)}</span>
+        ${s.materia ? `<span class="text-xs text-gray-400">· ${esc(s.materia)}</span>` : ''}
       </div>
-      <div class="flex items-center gap-2 shrink-0">
-        <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">📋 Form ✅</span>
-        ${waOk
-          ? `<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">💬 WA ✅ ${waDate}</span>`
-          : canWa
-            ? `<button onclick="sendHistoryWA('${esc(s.id)}')"
-                class="text-xs px-2 py-1 rounded-full bg-green-500 hover:bg-green-600 text-white font-semibold transition">
-                💬 Enviar WA
-              </button>`
-            : `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">💬 WA ⬜</span>`
-        }
+      <div class="flex flex-wrap items-center gap-3 mt-0.5">
+        ${s.docenteNombre ? `<span class="text-xs text-gray-500">👤 ${esc(s.docenteNombre)}</span>` : ''}
+        <span class="text-xs text-gray-400">${date}</span>
+        ${s.dificultades?.length ? `<span class="text-xs text-orange-600">⚠️ ${s.dificultades.length} con dificultades</span>` : `<span class="text-xs text-green-600">✅ Sin dificultades</span>`}
+        ${sentCount > 1 ? `<span class="text-xs text-blue-500">Form: ${sentCount}x</span>` : ''}
       </div>
-    </div>`;
-  }).join('');
+    </div>
+    <div class="flex items-center gap-2 shrink-0 flex-wrap">
+      <span class="text-xs px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-medium">📋 Form ✅</span>
+      ${waOk
+        ? `<span class="text-xs px-2 py-1 rounded-lg bg-green-100 text-green-700 font-medium">💬 WA ✅ ${waTime}</span>`
+        : `<span class="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-400">💬 WA ⬜</span>`
+      }
+      <div class="flex gap-1">
+        ${canWa ? `<button onclick="sendHistoryWA('${esc(s.id)}')"
+          class="text-xs px-3 py-1.5 rounded-lg bg-green-500 hover:bg-green-600 text-white font-semibold transition">
+          💬 WA
+        </button>` : ''}
+        ${canForm ? `<button onclick="resendForm('${esc(s.id)}')"
+          class="text-xs px-3 py-1.5 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-semibold transition">
+          📋 Reenviar Form
+        </button>` : ''}
+        <button onclick="toggleHistorialDetail('${esc(s.id)}')"
+          class="text-xs px-2 py-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 transition">
+          ···
+        </button>
+      </div>
+    </div>
+    <div id="hdet-${esc(s.id)}" class="hidden w-full mt-2 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 space-y-1">
+      <p><strong>Docente:</strong> ${esc(s.docenteNombre || s.docente || '–')}</p>
+      ${s.docentePhone ? `<p><strong>Teléfono:</strong> ${esc(s.docentePhone)}</p>` : ''}
+      <p><strong>Contenidos:</strong> ${esc(s.contenidos || '–')}</p>
+      ${s.dificultades?.length ? `<p><strong>Dificultades:</strong> ${s.dificultades.map(d => esc(d.nombre) + ' (' + d.promedio + '/10)').join(', ')}</p>` : ''}
+      ${s.waSentAt ? `<p><strong>WA enviado:</strong> ${new Date(s.waSentAt).toLocaleString('es-EC')}</p>` : ''}
+      ${s.lastFormSentAt ? `<p><strong>Último reenvío Form:</strong> ${new Date(s.lastFormSentAt).toLocaleString('es-EC')}</p>` : ''}
+    </div>
+  </div>`;
+}
+
+function toggleHistorialDetail(id) {
+  const el = document.getElementById('hdet-' + id);
+  if (el) el.classList.toggle('hidden');
 }
 
 async function sendHistoryWA(submissionId) {
   const s = historialData.find(x => x.id === submissionId);
   if (!s) return;
-  if (!waInstance) { alert('Conecta WhatsApp primero.'); return; }
+  if (!waInstance) { alert('Conecta WhatsApp primero (sección WhatsApp).'); return; }
 
-  const groups = [{
-    curso:        s.curso,
-    students:     s.students || [],
-    dificultades: s.dificultades || [],
-  }];
+  const groups = [{ curso: s.curso, students: s.students || [], dificultades: s.dificultades || [] }];
   const msg = buildWaMessage(groups, s.docenteNombre || s.docente, s.tabName);
 
   const sendRes = await fetch(API + 'api/wa/send', {
@@ -834,10 +911,18 @@ async function sendHistoryWA(submissionId) {
     body: JSON.stringify({ instanceName: waInstance, phone: s.docentePhone, message: msg }),
   }).then(r => r.json());
 
-  if (!sendRes.success) { alert('Error al enviar: ' + (sendRes.error || 'desconocido')); return; }
+  if (!sendRes.success) { alert('Error al enviar WA: ' + (sendRes.error || 'desconocido')); return; }
 
   await fetch(API + `api/submissions/${submissionId}/mark-wa-sent`, { method: 'POST' });
-  await loadHistory(); // refresh
+  await loadHistory();
+}
+
+async function resendForm(submissionId) {
+  if (!confirm('¿Reenviar este informe al formulario Google?')) return;
+  const res = await fetch(API + `api/submissions/${submissionId}/resend-form`, { method: 'POST' }).then(r => r.json());
+  if (!res.success) { alert('Error al reenviar: ' + (res.error || 'desconocido')); return; }
+  alert('✅ Reenviado correctamente al formulario.');
+  await loadHistory();
 }
 
 // ── WhatsApp / Evolution API ───────────────────────────────────────────────────
@@ -936,31 +1021,37 @@ function setWaStatus(status, label) {
   const setupBtn  = document.getElementById('waBtnSetup');
   const instLabel = document.getElementById('waInstanceLabel');
   const waAllBtn  = document.getElementById('waSendAllBtn');
+  const sideBar   = document.getElementById('waStatusSidebar');
+  const navBadge  = document.getElementById('waNavBadge');
 
   waConnected = status === 'connected';
   waAllBtn?.classList.toggle('hidden', !waConnected);
-  renderHistory(); // update WA send buttons in historial
+  filterHistory(); // re-render historial to show/hide WA buttons
 
   if (status === 'connected') {
-    badge.textContent = '✅ Conectado';
-    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700';
-    connected.classList.remove('hidden');
-    qr.classList.add('hidden');
-    instLabel.textContent = 'Instancia: ' + label;
-    setupBtn.textContent = 'Reconectar';
+    if (badge) { badge.textContent = '✅ Conectado'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700'; }
+    if (connected) { connected.classList.remove('hidden'); connected.classList.add('flex'); }
+    if (qr)        qr.classList.add('hidden');
+    if (instLabel) instLabel.textContent = 'Instancia: ' + label;
+    if (setupBtn)  setupBtn.textContent = 'Reconectar';
+    if (sideBar)   sideBar.textContent = 'WhatsApp: ✅ ' + label;
+    if (navBadge)  navBadge.className = 'ml-auto w-2 h-2 rounded-full bg-green-400';
   } else if (status === 'qr') {
-    badge.textContent = '⏳ Esperando escaneo';
-    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700';
-    connected.classList.add('hidden');
-    setupBtn.textContent = 'Configurar';
+    if (badge) { badge.textContent = '⏳ Esperando escaneo'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700'; }
+    if (connected) connected.classList.add('hidden');
+    if (setupBtn)  setupBtn.textContent = 'Configurar';
+    if (sideBar)   sideBar.textContent = 'WhatsApp: ⏳ Escanea QR';
+    if (navBadge)  navBadge.className = 'ml-auto w-2 h-2 rounded-full bg-yellow-400';
   } else if (status === 'error') {
-    badge.textContent = '❌ Error: ' + label;
-    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600';
+    if (badge) { badge.textContent = '❌ Error'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600'; }
+    if (sideBar)  sideBar.textContent = 'WhatsApp: ❌';
+    if (navBadge) navBadge.className = 'ml-auto w-2 h-2 rounded-full bg-red-400';
   } else {
-    badge.textContent = 'No conectado';
-    badge.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500';
-    connected.classList.add('hidden');
-    setupBtn.textContent = 'Configurar';
+    if (badge) { badge.textContent = 'No conectado'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500'; }
+    if (connected) connected.classList.add('hidden');
+    if (setupBtn)  setupBtn.textContent = 'Configurar';
+    if (sideBar)   sideBar.textContent = 'WhatsApp: no conectado';
+    if (navBadge)  navBadge.className = 'ml-auto w-2 h-2 rounded-full bg-gray-400';
   }
 }
 

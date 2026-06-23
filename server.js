@@ -757,8 +757,12 @@ app.post('/api/submit-forms', async (req, res) => {
         dificultades:  sub.dificultades  || [],
         students:      sub.students      || [],
         contenidos:    sub.contenidos    || '',
+        acciones:      sub.acciones      || '',
         formText:      sub.formText      || '',
+        formUrl:       formUrl           || '',
+        formFields:    formFields        || [],
         waSentAt:      null,
+        formSentCount: 1,
       });
       results.push({ label: `${sub.materia} – ${sub.dropdownOption}`, success: true });
     } catch (err) {
@@ -787,6 +791,64 @@ app.post('/api/submissions/:id/mark-wa-sent', (req, res) => {
   rec.waSentAt = new Date().toISOString();
   saveSubmissionsFile(list);
   res.json({ success: true });
+});
+
+// Reenviar al formulario usando datos guardados
+app.post('/api/submissions/:id/resend-form', async (req, res) => {
+  const list = loadSubmissionsFile();
+  const rec  = list.find(s => s.id === req.params.id);
+  if (!rec) return res.json({ success: false, error: 'No encontrado' });
+  if (!rec.formUrl) return res.json({ success: false, error: 'No hay URL de formulario guardada' });
+
+  const targetUrl = rec.formUrl.trim().replace('/viewform', '/formResponse');
+  const params = new URLSearchParams();
+
+  if (rec.formFields && rec.formFields.length > 0) {
+    for (const field of rec.formFields) {
+      let value;
+      switch (field.mapping) {
+        case 'auto_curso':        value = rec.curso;       break;
+        case 'text_docente':      value = rec.docente;     break;
+        case 'auto_materia':      value = rec.materia;     break;
+        case 'text_contenidos':   value = rec.contenidos;  break;
+        case 'auto_dificultades':
+          value = rec.dificultades?.length
+            ? rec.dificultades.map(d => `- ${d.nombre} (${d.promedio}/10)`).join('\n')
+            : 'Ninguno';
+          break;
+        case 'text_acciones':
+          value = rec.dificultades?.length ? (rec.acciones || '') : 'No aplica';
+          break;
+        case 'informe_completo': value = rec.formText; break;
+        case 'ignore': continue;
+        default: value = ''; break;
+      }
+      if (value !== undefined && value !== null) params.append(`entry.${field.entryId}`, value);
+    }
+  } else {
+    params.append('entry.1403373118', rec.curso);
+    params.append('entry.697644543',  rec.docente);
+    params.append('entry.2132854786', rec.materia);
+    params.append('entry.411694821',  rec.formText);
+  }
+  params.append('fvv', '1');
+  params.append('draftResponse', '[]');
+  params.append('pageHistory', '0');
+  params.append('fbzx', Math.floor(Math.random() * 1e16).toString());
+
+  try {
+    await axios.post(targetUrl, params.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
+      validateStatus: s => s < 400,
+    });
+    rec.formSentCount = (rec.formSentCount || 1) + 1;
+    rec.lastFormSentAt = new Date().toISOString();
+    saveSubmissionsFile(list);
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
 });
 
 // ── API: analyze sheet structure with Claude ──────────────────────────────────
