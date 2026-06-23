@@ -1168,7 +1168,7 @@ async function renderNuevoCursos() {
 
       <!-- Tutor strip -->
       <div class="px-5 pb-3 flex items-center gap-2 flex-wrap" id="nc-tutor-strip-${i}">
-        ${tutorBadgeHtml(tutorRec || (tutorName ? { nombre: tutorName } : null))}
+        ${tutorBadgeHtml(tutorRec)}
         <button onclick="toggleCourseTutorEdit(${i})"
           title="Editar datos del tutor"
           class="ml-1 text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-300 rounded-lg px-2 py-0.5 transition">
@@ -1177,7 +1177,7 @@ async function renderNuevoCursos() {
       </div>
 
       <!-- Inline tutor edit form -->
-      ${tutorEditFormHtml(i, tutorRec || (tutorName ? { nombre: tutorName } : null))}
+      ${tutorEditFormHtml(i, tutorRec)}
 
       <!-- Tabla de estudiantes (expandible) -->
       <div id="nc-det-${i}" class="hidden border-t border-gray-100 bg-gray-50">
