@@ -954,17 +954,98 @@ async function onNuevoSheetChange(id) {
   renderNuevoCursos();
 }
 
+let _currentDocente = null; // docente record currently shown in card
+
 function onNuevoDocenteInput(val) {
-  const d      = docentes.find(d => d.nombre.toLowerCase() === val.toLowerCase());
-  const phoneEl = document.getElementById('nuevoDocentePhone');
-  if (phoneEl) {
-    if (d?.celular) {
-      phoneEl.textContent = '📱 ' + d.celular;
-      phoneEl.classList.remove('hidden');
-    } else {
-      phoneEl.classList.add('hidden');
-    }
+  const d = docentes.find(d => d.nombre.toLowerCase() === val.toLowerCase());
+  renderDocenteCard(d || null);
+}
+
+// ── Docente Card (Read + Update) ───────────────────────────────────────────────
+function renderDocenteCard(d) {
+  _currentDocente = d;
+  const card = document.getElementById('docenteCard');
+  if (!card) return;
+
+  if (!d) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+
+  // Cancel any active edit
+  document.getElementById('docenteCardView').classList.remove('hidden');
+  document.getElementById('docenteCardEdit').classList.add('hidden');
+
+  // Populate view
+  const set = (id, val, prefix = '') => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (val) { el.textContent = prefix + val; el.classList.remove('hidden'); }
+    else      { el.classList.add('hidden'); }
+  };
+  set('dc-nombre',     d.nombre);
+  set('dc-cargo',      d.cargo);
+  set('dc-phone',      d.celular,             '📱 ');
+  set('dc-email-inst', d.correoInstitucional,  '📧 ');
+  set('dc-email-pers', d.correoPersonal,        '📧 ');
+}
+
+function startEditDocente() {
+  if (!_currentDocente) return;
+  document.getElementById('docenteCardView').classList.add('hidden');
+  document.getElementById('docenteCardEdit').classList.remove('hidden');
+  document.getElementById('docenteEditStatus').classList.add('hidden');
+  // Pre-fill edit fields
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set('dc-edit-nombre',     _currentDocente.nombre);
+  set('dc-edit-phone',      _currentDocente.celular || '');
+  set('dc-edit-email-inst', _currentDocente.correoInstitucional || '');
+  set('dc-edit-email-pers', _currentDocente.correoPersonal      || '');
+}
+
+function cancelEditDocente() {
+  document.getElementById('docenteCardView').classList.remove('hidden');
+  document.getElementById('docenteCardEdit').classList.add('hidden');
+}
+
+async function saveDocenteEdit() {
+  const nombre    = document.getElementById('dc-edit-nombre')?.value.trim()     || _currentDocente?.nombre;
+  const celular   = document.getElementById('dc-edit-phone')?.value.trim()      || '';
+  const emailInst = document.getElementById('dc-edit-email-inst')?.value.trim() || '';
+  const emailPers = document.getElementById('dc-edit-email-pers')?.value.trim() || '';
+
+  const statusEl = document.getElementById('docenteEditStatus');
+
+  const res = await fetch(API + 'api/docentes/upsert', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nombre,
+      celular,
+      correoInstitucional: emailInst,
+      correoPersonal:      emailPers,
+    }),
+  }).then(r => r.json());
+
+  if (!res.success) {
+    if (statusEl) { statusEl.textContent = '❌ ' + (res.error || 'Error al guardar'); statusEl.classList.remove('hidden'); }
+    return;
   }
+
+  // Update local docentes list
+  const idx = docentes.findIndex(d => d.nombre === (res.docente?.nombre || nombre));
+  if (idx >= 0) docentes[idx] = res.docente;
+  else           docentes.push(res.docente);
+
+  // Update datalist
+  const dl = document.getElementById('docentesList');
+  if (dl) dl.innerHTML = docentes.map(d => `<option value="${esc(d.nombre)}" data-phone="${d.celular}">`).join('');
+
+  // Update name input if name changed
+  const nameInput = document.getElementById('nuevoDocenteName');
+  if (nameInput) nameInput.value = res.docente.nombre;
+
+  // Re-render card
+  renderDocenteCard(res.docente);
+
+  if (statusEl) { statusEl.textContent = '✅ Guardado'; statusEl.classList.remove('hidden'); }
 }
 
 function renderNuevoCursos() {
@@ -978,25 +1059,54 @@ function renderNuevoCursos() {
   setNuevoInfo(`${nuevoGroups.length} curso(s) · ${totalEst} estudiantes · ${totalDif} con dificultades`);
 
   list.innerHTML = nuevoGroups.map((g, i) => `
-    <div class="flex items-center gap-3 px-5 py-2.5">
-      <input type="checkbox" id="nc-${i}" checked class="w-4 h-4 accent-indigo-600 shrink-0" />
+    <div class="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 transition">
+      <input type="checkbox" id="nc-${i}" checked class="w-4 h-4 accent-indigo-600 shrink-0 cursor-pointer" />
       <div class="flex-1 min-w-0">
-        <span class="font-medium text-gray-800 text-sm">${esc(g.curso)}</span>
-        <span class="ml-2 text-xs text-gray-400">${g.students.length} est.</span>
-        ${g.dificultades.length
-          ? `<span class="ml-1 text-xs text-orange-600 font-medium">⚠️ ${g.dificultades.length} dificultad(es)</span>`
-          : `<span class="ml-1 text-xs text-green-600">✅ sin dificultades</span>`}
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-semibold text-gray-800">${esc(g.curso)}</span>
+          <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">${g.students.length} estudiantes</span>
+          ${g.dificultades.length
+            ? `<span class="text-xs text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full font-medium">⚠️ ${g.dificultades.length} con dificultades</span>`
+            : `<span class="text-xs text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✅ Sin dificultades</span>`}
+        </div>
       </div>
-      <button onclick="toggleNuevoCursoDetail(${i})" class="text-xs text-gray-400 hover:text-gray-600 shrink-0">···</button>
+      <button onclick="toggleNuevoCursoDetail(${i})"
+        class="shrink-0 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-2 py-1 hover:bg-indigo-50 transition">
+        📋 Ver tabla
+      </button>
     </div>
-    <div id="nc-det-${i}" class="hidden px-5 pb-2">
-      <div class="grid grid-cols-2 sm:grid-cols-3 gap-1">
-        ${g.students.map(s => `
-          <div class="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg ${s.promedio < 7 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}">
-            <span>${s.promedio < 7 ? '⚠️' : '✅'}</span>
-            <span class="flex-1 truncate">${esc(s.nombre)}</span>
-            <span class="font-mono font-semibold">${s.promedio}</span>
-          </div>`).join('')}
+
+    <!-- Tabla de estudiantes -->
+    <div id="nc-det-${i}" class="hidden border-t border-gray-100 bg-gray-50">
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="bg-gray-100 border-b border-gray-200">
+              <th class="px-4 py-2 text-left font-semibold text-gray-500 w-8">#</th>
+              <th class="px-4 py-2 text-left font-semibold text-gray-500">Apellidos y Nombres</th>
+              <th class="px-4 py-2 text-center font-semibold text-gray-500 w-16">Nota</th>
+              <th class="px-4 py-2 text-center font-semibold text-gray-500 w-20">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${[...g.students]
+              .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
+              .map((s, n) => `
+              <tr class="${n % 2 === 0 ? 'bg-white' : 'bg-gray-50'} border-b border-gray-100 ${s.promedio < 7 ? 'text-red-700' : 'text-gray-700'}">
+                <td class="px-4 py-1.5 text-gray-400">${n + 1}</td>
+                <td class="px-4 py-1.5 font-medium">${esc(s.nombre)}</td>
+                <td class="px-4 py-1.5 text-center font-mono font-bold ${s.promedio < 7 ? 'text-red-600' : 'text-green-700'}">${s.promedio}</td>
+                <td class="px-4 py-1.5 text-center">${s.promedio < 7 ? '<span class="bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full text-xs">Dificultad</span>' : '<span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full text-xs">Aprobado</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot>
+            <tr class="bg-gray-100 border-t border-gray-200 font-semibold text-gray-600">
+              <td colspan="2" class="px-4 py-2">Total: ${g.students.length} estudiantes</td>
+              <td class="px-4 py-2 text-center">${(g.students.reduce((a, s) => a + parseFloat(s.promedio || 0), 0) / (g.students.length || 1)).toFixed(1)}</td>
+              <td class="px-4 py-2 text-center text-orange-600">${g.dificultades.length} dificultad(es)</td>
+            </tr>
+          </tfoot>
+        </table>
       </div>
     </div>`).join('');
 }

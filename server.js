@@ -32,22 +32,52 @@ function normalizePhone(raw) {
 }
 
 // ── Docentes loader ───────────────────────────────────────────────────────────
-const DOCENTES_XLSX = path.join(__dirname, 'Datos', 'DATOS DOCENTES 2025 Conservatorio Bolívar.xlsx');
+// Filename uses NFD decomposed í (i + combining accent cc81)
+const DOCENTES_XLSX = (() => {
+  const dir   = path.join(__dirname, 'Datos');
+  const found = fs.readdirSync(dir).find(f => f.includes('DOCENTES'));
+  return found ? path.join(dir, found) : path.join(dir, 'DATOS DOCENTES 2025 Conservatorio Bolívar.xlsx');
+})();
+const DOCENTES_OVERRIDES  = path.join(__dirname, 'docentes_overrides.json');
+
+function loadDocenteOverrides() {
+  if (!fs.existsSync(DOCENTES_OVERRIDES)) return {};
+  try { return JSON.parse(fs.readFileSync(DOCENTES_OVERRIDES, 'utf8')); } catch { return {}; }
+}
+
+function saveDocenteOverride(nombre, data) {
+  const ov = loadDocenteOverrides();
+  ov[nombre] = { ...(ov[nombre] || {}), ...data };
+  fs.writeFileSync(DOCENTES_OVERRIDES, JSON.stringify(ov, null, 2));
+}
 
 function loadDocentes() {
   if (!fs.existsSync(DOCENTES_XLSX)) return [];
   const wb   = XLSX.readFile(DOCENTES_XLSX);
   const rows = XLSX.utils.sheet_to_json(wb.Sheets['GENERAL'], { header: 1, defval: '' });
+  const overrides = loadDocenteOverrides();
+
   return rows.slice(3)
     .filter(r => r[1] && String(r[1]).trim())
-    .map(r => ({
-      nombre:              String(r[1]).trim(),
-      cargo:               String(r[4]).trim(),
-      celular:             normalizePhone(r[7]),
-      correoInstitucional: String(r[5]).trim().replace(/\s/g, ''),
-      correoPersonal:      String(r[6]).trim().replace(/\s/g, ''),
-    }))
-    .filter(d => d.celular);
+    .map(r => {
+      const nombre = String(r[1]).trim();
+      const base = {
+        nombre,
+        cargo:               String(r[4]).trim(),
+        celular:             normalizePhone(r[7]),
+        correoInstitucional: String(r[5]).trim().replace(/\s/g, ''),
+        correoPersonal:      String(r[6]).trim().replace(/\s/g, ''),
+      };
+      // Merge overrides (override can change celular, correo, etc.)
+      const ov = overrides[nombre] || {};
+      return {
+        ...base,
+        ...ov,
+        // Always re-normalize phone if override provided raw number
+        celular: ov.celular ? normalizePhone(ov.celular) : base.celular,
+      };
+    })
+    .filter(d => d.nombre);
 }
 
 // ── Submissions store ─────────────────────────────────────────────────────────
@@ -630,6 +660,22 @@ Responde SOLO con JSON: {"fields":[{"entryId":number,"label":"...","mapping":"ti
 // ── API: docentes ────────────────────────────────────────────────────────────
 app.get('/api/docentes', (_req, res) => {
   res.json({ docentes: loadDocentes() });
+});
+
+// Crear o actualizar un docente (override sobre el XLSX)
+app.post('/api/docentes/upsert', (req, res) => {
+  const { nombre, celular, correoInstitucional, correoPersonal, cargo } = req.body;
+  if (!nombre) return res.json({ success: false, error: 'Falta nombre' });
+  saveDocenteOverride(nombre, {
+    ...(celular             !== undefined && { celular }),
+    ...(correoInstitucional !== undefined && { correoInstitucional }),
+    ...(correoPersonal      !== undefined && { correoPersonal }),
+    ...(cargo               !== undefined && { cargo }),
+  });
+  // Return updated docente record
+  const updated = loadDocentes().find(d => d.nombre === nombre)
+    || { nombre, celular, correoInstitucional, correoPersonal, cargo };
+  res.json({ success: true, docente: updated });
 });
 
 // ── API: WhatsApp / Evolution API ─────────────────────────────────────────────
