@@ -1048,6 +1048,58 @@ async function saveDocenteEdit() {
   if (statusEl) { statusEl.textContent = '✅ Guardado'; statusEl.classList.remove('hidden'); }
 }
 
+function tutorBadgeHtml(docenteRec) {
+  if (!docenteRec) return '<span class="text-xs text-gray-400 italic">Sin tutor asignado</span>';
+  const parts = [`<span class="font-medium text-gray-700">👤 ${esc(docenteRec.nombre)}</span>`];
+  if (docenteRec.cargo)               parts.push(`<span class="text-xs text-gray-400">${esc(docenteRec.cargo)}</span>`);
+  if (docenteRec.celular)             parts.push(`<span class="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">📱 ${esc(docenteRec.celular)}</span>`);
+  if (docenteRec.correoInstitucional) parts.push(`<span class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full">📧 ${esc(docenteRec.correoInstitucional)}</span>`);
+  if (docenteRec.correoPersonal && docenteRec.correoPersonal !== docenteRec.correoInstitucional)
+    parts.push(`<span class="text-xs bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full">📧 ${esc(docenteRec.correoPersonal)}</span>`);
+  return parts.join(' ');
+}
+
+function tutorEditFormHtml(idx, docenteRec) {
+  const d = docenteRec || {};
+  return `
+    <div id="nc-tutor-edit-${idx}" class="hidden px-5 py-3 bg-indigo-50 border-t border-indigo-100 space-y-2">
+      <p class="text-xs font-semibold text-indigo-700">✏️ Editar datos del tutor</p>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs text-gray-500">Nombre completo</label>
+          <input id="nc-te-nombre-${idx}" type="text" value="${esc(d.nombre||'')}"
+            class="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-500">Celular</label>
+          <input id="nc-te-phone-${idx}" type="text" value="${esc(d.celular||'')}" placeholder="0984865981"
+            class="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-500">Correo institucional</label>
+          <input id="nc-te-einst-${idx}" type="email" value="${esc(d.correoInstitucional||'')}"
+            class="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-500">Correo personal</label>
+          <input id="nc-te-epers-${idx}" type="email" value="${esc(d.correoPersonal||'')}"
+            class="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+        </div>
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button onclick="saveCourseDocente(${idx})"
+          class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-2 rounded-lg transition">
+          💾 Guardar
+        </button>
+        <button onclick="document.getElementById('nc-tutor-edit-${idx}').classList.add('hidden')"
+          class="px-4 bg-white border border-gray-300 hover:bg-gray-50 text-gray-600 text-xs font-semibold py-2 rounded-lg transition">
+          Cancelar
+        </button>
+      </div>
+      <p id="nc-te-status-${idx}" class="text-xs text-green-600 hidden"></p>
+    </div>`;
+}
+
 function renderNuevoCursos() {
   const section = document.getElementById('nuevoCursosSection');
   const list    = document.getElementById('nuevoCursosList');
@@ -1058,57 +1110,141 @@ function renderNuevoCursos() {
   const totalDif = nuevoGroups.reduce((a, g) => a + g.dificultades.length, 0);
   setNuevoInfo(`${nuevoGroups.length} curso(s) · ${totalEst} estudiantes · ${totalDif} con dificultades`);
 
-  list.innerHTML = nuevoGroups.map((g, i) => `
-    <div class="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 transition">
-      <input type="checkbox" id="nc-${i}" checked class="w-4 h-4 accent-indigo-600 shrink-0 cursor-pointer" />
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-semibold text-gray-800">${esc(g.curso)}</span>
-          <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">${g.students.length} estudiantes</span>
-          ${g.dificultades.length
-            ? `<span class="text-xs text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full font-medium">⚠️ ${g.dificultades.length} con dificultades</span>`
-            : `<span class="text-xs text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✅ Sin dificultades</span>`}
+  list.innerHTML = nuevoGroups.map((g, i) => {
+    // Resolve tutor: from sheet's docenteNombre → docentes list
+    const sheet      = savedSheets.find(s => s.id === (g.sheetId || nuevoSheetId));
+    const tutorName  = sheet?.docenteNombre || '';
+    const tutorRec   = tutorName ? docentes.find(d => d.nombre === tutorName) : null;
+
+    return `
+    <div class="border-b border-gray-100 last:border-0">
+      <!-- Row header -->
+      <div class="px-5 py-3 flex items-center gap-3 hover:bg-gray-50 transition">
+        <input type="checkbox" id="nc-${i}" checked class="w-4 h-4 accent-indigo-600 shrink-0 cursor-pointer" />
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-semibold text-gray-800">${esc(g.curso)}</span>
+            <span class="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">${g.students.length} est.</span>
+            ${g.dificultades.length
+              ? `<span class="text-xs text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full font-medium">⚠️ ${g.dificultades.length} dif.</span>`
+              : `<span class="text-xs text-green-600 bg-green-50 border border-green-200 px-2 py-0.5 rounded-full">✅ Sin dif.</span>`}
+          </div>
+        </div>
+        <button onclick="toggleNuevoCursoDetail(${i})"
+          class="shrink-0 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-2 py-1 hover:bg-indigo-50 transition whitespace-nowrap">
+          📋 Ver tabla
+        </button>
+      </div>
+
+      <!-- Tutor strip -->
+      <div class="px-5 pb-3 flex items-center gap-2 flex-wrap" id="nc-tutor-strip-${i}">
+        ${tutorBadgeHtml(tutorRec || (tutorName ? { nombre: tutorName } : null))}
+        <button onclick="toggleCourseTutorEdit(${i})"
+          title="Editar datos del tutor"
+          class="ml-1 text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-300 rounded-lg px-2 py-0.5 transition">
+          ✏️ Editar
+        </button>
+      </div>
+
+      <!-- Inline tutor edit form -->
+      ${tutorEditFormHtml(i, tutorRec || (tutorName ? { nombre: tutorName } : null))}
+
+      <!-- Tabla de estudiantes (expandible) -->
+      <div id="nc-det-${i}" class="hidden border-t border-gray-100 bg-gray-50">
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="bg-gray-100 border-b border-gray-200">
+                <th class="px-4 py-2 text-left font-semibold text-gray-500 w-8">#</th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-500">Apellidos y Nombres</th>
+                <th class="px-4 py-2 text-center font-semibold text-gray-500 w-16">Nota</th>
+                <th class="px-4 py-2 text-center font-semibold text-gray-500 w-24">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${[...g.students]
+                .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
+                .map((s, n) => `
+                <tr class="${n % 2 === 0 ? 'bg-white' : 'bg-gray-50'} border-b border-gray-100">
+                  <td class="px-4 py-1.5 text-gray-400">${n + 1}</td>
+                  <td class="px-4 py-1.5 font-medium ${s.promedio < 7 ? 'text-red-700' : 'text-gray-700'}">${esc(s.nombre)}</td>
+                  <td class="px-4 py-1.5 text-center font-mono font-bold ${s.promedio < 7 ? 'text-red-600' : 'text-green-700'}">${s.promedio}</td>
+                  <td class="px-4 py-1.5 text-center">${s.promedio < 7
+                    ? '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Dificultad</span>'
+                    : '<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Aprobado</span>'}</td>
+                </tr>`).join('')}
+            </tbody>
+            <tfoot>
+              <tr class="bg-gray-100 border-t border-gray-200 font-semibold text-gray-600">
+                <td colspan="2" class="px-4 py-2">Total: ${g.students.length} estudiantes</td>
+                <td class="px-4 py-2 text-center">${(g.students.reduce((a, s) => a + parseFloat(s.promedio || 0), 0) / (g.students.length || 1)).toFixed(1)}</td>
+                <td class="px-4 py-2 text-center text-orange-600">${g.dificultades.length} con dificultad</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
-      <button onclick="toggleNuevoCursoDetail(${i})"
-        class="shrink-0 text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded-lg px-2 py-1 hover:bg-indigo-50 transition">
-        📋 Ver tabla
-      </button>
-    </div>
+    </div>`;
+  }).join('');
+}
 
-    <!-- Tabla de estudiantes -->
-    <div id="nc-det-${i}" class="hidden border-t border-gray-100 bg-gray-50">
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs">
-          <thead>
-            <tr class="bg-gray-100 border-b border-gray-200">
-              <th class="px-4 py-2 text-left font-semibold text-gray-500 w-8">#</th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-500">Apellidos y Nombres</th>
-              <th class="px-4 py-2 text-center font-semibold text-gray-500 w-16">Nota</th>
-              <th class="px-4 py-2 text-center font-semibold text-gray-500 w-20">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${[...g.students]
-              .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
-              .map((s, n) => `
-              <tr class="${n % 2 === 0 ? 'bg-white' : 'bg-gray-50'} border-b border-gray-100 ${s.promedio < 7 ? 'text-red-700' : 'text-gray-700'}">
-                <td class="px-4 py-1.5 text-gray-400">${n + 1}</td>
-                <td class="px-4 py-1.5 font-medium">${esc(s.nombre)}</td>
-                <td class="px-4 py-1.5 text-center font-mono font-bold ${s.promedio < 7 ? 'text-red-600' : 'text-green-700'}">${s.promedio}</td>
-                <td class="px-4 py-1.5 text-center">${s.promedio < 7 ? '<span class="bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full text-xs">Dificultad</span>' : '<span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full text-xs">Aprobado</span>'}</td>
-              </tr>`).join('')}
-          </tbody>
-          <tfoot>
-            <tr class="bg-gray-100 border-t border-gray-200 font-semibold text-gray-600">
-              <td colspan="2" class="px-4 py-2">Total: ${g.students.length} estudiantes</td>
-              <td class="px-4 py-2 text-center">${(g.students.reduce((a, s) => a + parseFloat(s.promedio || 0), 0) / (g.students.length || 1)).toFixed(1)}</td>
-              <td class="px-4 py-2 text-center text-orange-600">${g.dificultades.length} dificultad(es)</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>`).join('');
+function toggleCourseTutorEdit(i) {
+  document.getElementById(`nc-tutor-edit-${i}`)?.classList.toggle('hidden');
+}
+
+async function saveCourseDocente(i) {
+  const nombre = document.getElementById(`nc-te-nombre-${i}`)?.value.trim();
+  const phone  = document.getElementById(`nc-te-phone-${i}`)?.value.trim();
+  const eInst  = document.getElementById(`nc-te-einst-${i}`)?.value.trim();
+  const ePers  = document.getElementById(`nc-te-epers-${i}`)?.value.trim();
+  const status = document.getElementById(`nc-te-status-${i}`);
+
+  if (!nombre) { if (status) { status.textContent = '⚠️ El nombre es requerido'; status.classList.remove('hidden'); } return; }
+
+  const res = await fetch(API + 'api/docentes/upsert', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, celular: phone, correoInstitucional: eInst, correoPersonal: ePers }),
+  }).then(r => r.json());
+
+  if (!res.success) {
+    if (status) { status.textContent = '❌ ' + (res.error || 'Error'); status.classList.remove('hidden'); }
+    return;
+  }
+
+  // Update local docentes list
+  const idx = docentes.findIndex(d => d.nombre === nombre);
+  if (idx >= 0) docentes[idx] = res.docente;
+  else           docentes.push(res.docente);
+
+  // Update the sheet's docenteNombre so the card also reflects the change
+  const sheet = savedSheets.find(s => s.id === nuevoSheetId);
+  if (sheet && !sheet.docenteNombre) {
+    sheet.docenteNombre = nombre;
+    save();
+  }
+
+  // Update the name input at the top if empty
+  const nameInput = document.getElementById('nuevoDocenteName');
+  if (nameInput && !nameInput.value) nameInput.value = nombre;
+
+  // Update tutor badge in the strip without full re-render
+  const strip = document.getElementById(`nc-tutor-strip-${i}`);
+  if (strip) {
+    const editBtn = strip.querySelector('button');
+    strip.innerHTML = tutorBadgeHtml(res.docente);
+    strip.appendChild(editBtn || Object.assign(document.createElement('button'), {
+      onclick: () => toggleCourseTutorEdit(i),
+      className: 'ml-1 text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-300 rounded-lg px-2 py-0.5 transition',
+      textContent: '✏️ Editar',
+    }));
+  }
+
+  // Hide edit form, show success
+  if (status) { status.textContent = '✅ Guardado'; status.classList.remove('hidden'); }
+  setTimeout(() => {
+    document.getElementById(`nc-tutor-edit-${i}`)?.classList.add('hidden');
+    renderDocenteCard(res.docente); // sync main docente card too
+  }, 800);
 }
 
 function toggleNuevoCursoDetail(i) {
