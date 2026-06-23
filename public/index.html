@@ -167,6 +167,18 @@
     <div id="resultsList" class="space-y-2"></div>
   </div>
 
+  <!-- Historial de envíos -->
+  <div id="historialSection" class="hidden bg-white rounded-2xl shadow overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold text-gray-700">🗂 Historial de envíos</h2>
+        <p class="text-xs text-gray-400 mt-0.5">Formularios enviados. Puedes reenviar por WhatsApp si aún no se ha hecho.</p>
+      </div>
+      <button onclick="loadHistory()" class="text-xs text-gray-400 hover:text-gray-600">↺ Actualizar</button>
+    </div>
+    <div id="historialList"></div>
+  </div>
+
 </div>
 <script>
   ['sheets_v2','enabled_v2','sheetmeta_v2','formUrl_v2',

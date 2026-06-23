@@ -653,15 +653,23 @@ async function submitForms() {
   document.getElementById('sendSpinner').classList.remove('hidden');
 
   const submissions = toSend.map(g => {
-    const contenidos = sheetData[g.sheetId]?.contenidos || '';
+    const contenidos    = sheetData[g.sheetId]?.contenidos || '';
+    const sheet         = savedSheets.find(s => s.id === g.sheetId);
+    const docenteNombre = sheet?.docenteNombre || docente;
+    const docenteRec    = docentes.find(d => d.nombre === docenteNombre);
     return {
       dropdownOption: g.dropdownOption,
       docente,
-      materia:    g.materia,
+      materia:        g.materia,
       contenidos,
       acciones,
-      dificultades: g.dificultades,
-      formText:   buildFormText(contenidos, g.dificultades, acciones),
+      dificultades:   g.dificultades,
+      students:       g.students,
+      formText:       buildFormText(contenidos, g.dificultades, acciones),
+      tabName:        g.tabName    || sheet?.tabName || '',
+      sheetId:        g.sheetId,
+      docenteNombre,
+      docentePhone:   docenteRec?.celular || '',
     };
   });
 
@@ -672,6 +680,7 @@ async function submitForms() {
       body:    JSON.stringify({ submissions, formUrl, formFields }),
     }).then(r => r.json());
     renderResults(res.results, skipped);
+    loadHistory(); // refresh historial after submit
   } catch (e) {
     alert('Error: ' + e.message);
   } finally {
@@ -755,6 +764,81 @@ async function loadFromStorage() {
 }
 
 document.getElementById('formUrl').addEventListener('input', save);
+
+// ── Historial de envíos ────────────────────────────────────────────────────────
+let historialData = [];
+
+async function loadHistory() {
+  try {
+    const res = await fetch(API + 'api/submissions').then(r => r.json());
+    historialData = res.submissions || [];
+    renderHistory();
+  } catch(e) {}
+}
+
+function renderHistory() {
+  const section = document.getElementById('historialSection');
+  const list    = document.getElementById('historialList');
+  if (!historialData.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  list.innerHTML = historialData.map(s => {
+    const date   = new Date(s.sentAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
+    const waOk   = !!s.waSentAt;
+    const waDate = waOk ? new Date(s.waSentAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' }) : null;
+    const canWa  = waConnected && s.docentePhone && !waOk;
+
+    return `<div class="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50">
+      <div class="flex-1 min-w-0">
+        <div class="flex flex-wrap items-center gap-1.5">
+          ${s.tabName ? `<span class="text-xs font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">${esc(s.tabName)}</span>` : ''}
+          <span class="text-xs font-semibold text-gray-800">${esc(s.curso)}</span>
+          ${s.materia ? `<span class="text-xs text-gray-400">· ${esc(s.materia)}</span>` : ''}
+        </div>
+        <div class="flex flex-wrap items-center gap-2 mt-0.5">
+          ${s.docenteNombre ? `<span class="text-xs text-gray-500">👤 ${esc(s.docenteNombre)}</span>` : ''}
+          <span class="text-xs text-gray-400">${date}</span>
+          ${s.dificultades?.length ? `<span class="text-xs text-orange-600">⚠️ ${s.dificultades.length} dificultad(es)</span>` : ''}
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">📋 Form ✅</span>
+        ${waOk
+          ? `<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">💬 WA ✅ ${waDate}</span>`
+          : canWa
+            ? `<button onclick="sendHistoryWA('${esc(s.id)}')"
+                class="text-xs px-2 py-1 rounded-full bg-green-500 hover:bg-green-600 text-white font-semibold transition">
+                💬 Enviar WA
+              </button>`
+            : `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">💬 WA ⬜</span>`
+        }
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function sendHistoryWA(submissionId) {
+  const s = historialData.find(x => x.id === submissionId);
+  if (!s) return;
+  if (!waInstance) { alert('Conecta WhatsApp primero.'); return; }
+
+  const groups = [{
+    curso:        s.curso,
+    students:     s.students || [],
+    dificultades: s.dificultades || [],
+  }];
+  const msg = buildWaMessage(groups, s.docenteNombre || s.docente, s.tabName);
+
+  const sendRes = await fetch(API + 'api/wa/send', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instanceName: waInstance, phone: s.docentePhone, message: msg }),
+  }).then(r => r.json());
+
+  if (!sendRes.success) { alert('Error al enviar: ' + (sendRes.error || 'desconocido')); return; }
+
+  await fetch(API + `api/submissions/${submissionId}/mark-wa-sent`, { method: 'POST' });
+  await loadHistory(); // refresh
+}
 
 // ── WhatsApp / Evolution API ───────────────────────────────────────────────────
 let waInstance  = localStorage.getItem('wa_instance') || '';
@@ -855,6 +939,7 @@ function setWaStatus(status, label) {
 
   waConnected = status === 'connected';
   waAllBtn?.classList.toggle('hidden', !waConnected);
+  renderHistory(); // update WA send buttons in historial
 
   if (status === 'connected') {
     badge.textContent = '✅ Conectado';
@@ -974,3 +1059,4 @@ async function sendWhatsAppAll() {
 checkAuth();
 loadFromStorage();
 initWa();
+loadHistory();

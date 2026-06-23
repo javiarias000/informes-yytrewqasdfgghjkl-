@@ -50,6 +50,25 @@ function loadDocentes() {
     .filter(d => d.celular);
 }
 
+// ── Submissions store ─────────────────────────────────────────────────────────
+const SUBMISSIONS_FILE = path.join(__dirname, 'submissions.json');
+
+function loadSubmissionsFile() {
+  if (!fs.existsSync(SUBMISSIONS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(SUBMISSIONS_FILE, 'utf8')); } catch { return []; }
+}
+
+function saveSubmissionsFile(list) {
+  fs.writeFileSync(SUBMISSIONS_FILE, JSON.stringify(list, null, 2));
+}
+
+function addSubmissionRecord(record) {
+  const list = loadSubmissionsFile();
+  list.unshift(record); // newest first
+  if (list.length > 500) list.splice(500); // cap
+  saveSubmissionsFile(list);
+}
+
 // ── OAuth setup ───────────────────────────────────────────────────────────────
 
 const credentials = JSON.parse(fs.readFileSync('credentials.json')).web;
@@ -723,6 +742,24 @@ app.post('/api/submit-forms', async (req, res) => {
         validateStatus: s => s < 400,
       });
 
+      // Persist successful submission
+      addSubmissionRecord({
+        id:            `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        sentAt:        new Date().toISOString(),
+        formSuccess:   true,
+        tabName:       sub.tabName       || '',
+        sheetId:       sub.sheetId       || '',
+        materia:       sub.materia       || '',
+        docente:       sub.docente       || '',
+        docenteNombre: sub.docenteNombre || sub.docente || '',
+        docentePhone:  sub.docentePhone  || '',
+        curso:         sub.dropdownOption,
+        dificultades:  sub.dificultades  || [],
+        students:      sub.students      || [],
+        contenidos:    sub.contenidos    || '',
+        formText:      sub.formText      || '',
+        waSentAt:      null,
+      });
       results.push({ label: `${sub.materia} – ${sub.dropdownOption}`, success: true });
     } catch (err) {
       results.push({
@@ -736,6 +773,20 @@ app.post('/api/submit-forms', async (req, res) => {
   }
 
   res.json({ results });
+});
+
+// ── API: historial de envíos ───────────────────────────────────────────────────
+app.get('/api/submissions', (_req, res) => {
+  res.json({ submissions: loadSubmissionsFile() });
+});
+
+app.post('/api/submissions/:id/mark-wa-sent', (req, res) => {
+  const list = loadSubmissionsFile();
+  const rec  = list.find(s => s.id === req.params.id);
+  if (!rec) return res.json({ success: false, error: 'No encontrado' });
+  rec.waSentAt = new Date().toISOString();
+  saveSubmissionsFile(list);
+  res.json({ success: true });
 });
 
 // ── API: analyze sheet structure with Claude ──────────────────────────────────

@@ -9,3 +9,6 @@ credentials.json
 Datos/*.csv
 Datos/*.xlsx
 Datos/*.xls
+
+# Historial de envíos (datos sensibles)
+submissions.json
