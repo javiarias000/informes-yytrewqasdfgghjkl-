@@ -609,6 +609,141 @@ function renderPreviews(groups) {
 
   document.getElementById('previewSection').classList.remove('hidden');
   document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('waResultsList')?.classList.add('hidden');
+  renderWaSendPanel();
+}
+
+// ── WhatsApp send panel (in Nuevo informe) ─────────────────────────────────────
+let _waEntries = []; // built each time we render the panel
+
+function buildWaEntries() {
+  // One entry per unique docenteNombre across all loaded groups
+  const map = {}; // docenteNombre (or __sheet_id) → entry
+
+  for (const g of loadedGroups) {
+    const sheet         = savedSheets.find(s => s.id === g.sheetId);
+    const docenteNombre = sheet?.docenteNombre || '';
+    const key           = docenteNombre || `__sheet_${g.sheetId}`;
+
+    if (!map[key]) {
+      const docRec = docenteNombre ? docentes.find(d => d.nombre === docenteNombre) : null;
+      map[key] = {
+        docenteNombre,
+        docentePhone: docRec?.celular || '',
+        groups: [],
+        sheetId: g.sheetId, // for sheets with no docente assigned
+      };
+    }
+    map[key].groups.push(g);
+  }
+
+  return Object.values(map);
+}
+
+function renderWaSendPanel() {
+  const panel = document.getElementById('waSendPanel');
+  if (!panel) return;
+
+  _waEntries = buildWaEntries();
+  if (!_waEntries.length) { panel.classList.add('hidden'); return; }
+
+  panel.classList.remove('hidden');
+
+  const notConnected = document.getElementById('waPanelNotConnected');
+  const statusEl     = document.getElementById('waPanelStatus');
+  notConnected.classList.toggle('hidden', waConnected);
+  if (statusEl) {
+    statusEl.textContent = waConnected ? '✅ WhatsApp conectado' : '';
+    statusEl.className   = waConnected ? 'text-xs text-green-600 font-medium' : 'text-xs';
+  }
+
+  const list = document.getElementById('waSendList');
+  list.innerHTML = _waEntries.map((e, i) => {
+    const hasPhone = !!e.docentePhone;
+    const canCheck = waConnected && hasPhone;
+    const disabledAttr = canCheck ? '' : 'disabled';
+
+    return `<div class="flex flex-wrap items-center gap-3 px-5 py-3">
+      <input type="checkbox" id="wa-chk-${i}" ${canCheck ? 'checked' : ''} ${disabledAttr}
+        class="w-4 h-4 accent-green-600 cursor-pointer shrink-0" />
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${e.docenteNombre
+            ? `<span class="font-semibold text-gray-800">👤 ${esc(e.docenteNombre)}</span>
+               ${hasPhone
+                 ? `<span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200">📱 ${esc(e.docentePhone)}</span>`
+                 : `<span class="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full">Sin teléfono registrado</span>`
+               }`
+            : `<select onchange="updateWaPanelDocente(${i}, this.value)"
+                 class="text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-300 bg-white">
+                 <option value="">— Seleccionar docente —</option>
+                 ${docentes.map(d => `<option value="${esc(d.nombre)}">${esc(d.nombre)} · ${esc(d.celular || '–')}</option>`).join('')}
+               </select>`
+          }
+        </div>
+        <div class="flex flex-wrap gap-1 mt-1.5">
+          ${e.groups.map(g => `
+            <span class="text-xs px-2 py-0.5 rounded-lg border ${g.dificultades.length ? 'bg-orange-50 border-orange-200 text-orange-800' : 'bg-indigo-50 border-indigo-200 text-indigo-700'}">
+              ${g.tabName ? `<b>${esc(g.tabName)}</b> · ` : ''}${esc(g.curso)}
+              · ${g.students.length} est.
+              ${g.dificultades.length ? `· ⚠️ ${g.dificultades.length} dif.` : ''}
+            </span>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateWaPanelDocente(idx, nombre) {
+  const entry  = _waEntries[idx];
+  const docRec = docentes.find(d => d.nombre === nombre);
+  entry.docenteNombre = nombre;
+  entry.docentePhone  = docRec?.celular || '';
+  renderWaSendPanel(); // re-render to update checkbox state
+}
+
+function toggleAllWaChecks(checked) {
+  _waEntries.forEach((e, i) => {
+    const chk = document.getElementById(`wa-chk-${i}`);
+    if (chk && !chk.disabled) chk.checked = checked;
+  });
+}
+
+async function sendSelectedWA() {
+  if (!waInstance) { alert('Conecta WhatsApp primero (sección WhatsApp).'); return; }
+
+  const toSend = _waEntries.filter((e, i) => {
+    const chk = document.getElementById(`wa-chk-${i}`);
+    return chk?.checked && e.docentePhone;
+  });
+
+  if (!toSend.length) { alert('Selecciona al menos un docente con teléfono registrado.'); return; }
+
+  document.getElementById('waSendSpinner').classList.remove('hidden');
+  const results = [];
+
+  for (const e of toSend) {
+    const msg = buildWaMessage(e.groups, e.docenteNombre, e.groups[0]?.tabName || '');
+    const res = await fetch(API + 'api/wa/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instanceName: waInstance, phone: e.docentePhone, message: msg }),
+    }).then(r => r.json());
+    results.push({ label: e.docenteNombre, success: res.success, error: res.error });
+    if (toSend.length > 1) await new Promise(r => setTimeout(r, 600));
+  }
+
+  document.getElementById('waSendSpinner').classList.add('hidden');
+
+  const resContainer = document.getElementById('waResultsList');
+  resContainer.classList.remove('hidden');
+  resContainer.innerHTML = `
+    <p class="text-xs font-semibold text-gray-600 mb-1">Resultado WhatsApp:</p>
+    ${results.map(r => `
+      <div class="flex items-center gap-2 text-xs py-1">
+        <span>${r.success ? '✅' : '❌'}</span>
+        <span class="font-medium">${esc(r.label)}</span>
+        ${r.error ? `<span class="text-red-500 opacity-80">${esc(r.error)}</span>` : ''}
+      </div>`).join('')}`;
 }
 
 function toggleDetail(idx) {
@@ -1026,7 +1161,8 @@ function setWaStatus(status, label) {
 
   waConnected = status === 'connected';
   waAllBtn?.classList.toggle('hidden', !waConnected);
-  filterHistory(); // re-render historial to show/hide WA buttons
+  filterHistory();          // re-render historial WA buttons
+  if (_waEntries.length) renderWaSendPanel(); // refresh panel checkbox states
 
   if (status === 'connected') {
     if (badge) { badge.textContent = '✅ Conectado'; badge.className = 'text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700'; }

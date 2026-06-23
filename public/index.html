@@ -141,19 +141,53 @@
 
       <!-- Previews -->
       <div id="previewSection" class="hidden mt-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="font-semibold text-gray-700">👁 Vista previa por curso</h2>
-          <button onclick="sendWhatsAppAll()" id="waSendAllBtn"
-            class="hidden bg-green-500 hover:bg-green-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
-            💬 Enviar WA a docentes
-          </button>
-        </div>
+        <h2 class="font-semibold text-gray-700 mb-3">👁 Vista previa por curso</h2>
         <div id="previewList" class="space-y-3"></div>
       </div>
 
-      <!-- Results -->
+      <!-- WhatsApp send panel -->
+      <div id="waSendPanel" class="hidden mt-4 bg-white rounded-2xl shadow overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-gray-700">💬 Enviar por WhatsApp</h2>
+            <p class="text-xs text-gray-400 mt-0.5">Selecciona los docentes a quienes enviar el informe</p>
+          </div>
+          <div id="waPanelStatus" class="text-xs"></div>
+        </div>
+
+        <!-- Not connected warning -->
+        <div id="waPanelNotConnected" class="hidden px-5 py-4 bg-yellow-50 flex items-center gap-3">
+          <span class="text-lg">⚠️</span>
+          <div>
+            <p class="text-xs font-semibold text-yellow-800">WhatsApp no conectado</p>
+            <button onclick="showSection('whatsapp')" class="text-xs text-yellow-700 underline">Ir a configurar WhatsApp →</button>
+          </div>
+        </div>
+
+        <!-- Docente list -->
+        <div id="waSendList" class="divide-y divide-gray-100"></div>
+
+        <!-- Actions -->
+        <div class="px-5 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
+          <div class="flex gap-2">
+            <button onclick="toggleAllWaChecks(true)"  class="text-xs text-gray-500 hover:text-gray-700">Seleccionar todos</button>
+            <span class="text-gray-300">|</span>
+            <button onclick="toggleAllWaChecks(false)" class="text-xs text-gray-500 hover:text-gray-700">Ninguno</button>
+          </div>
+          <button onclick="sendSelectedWA()"
+            class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-5 py-2 rounded-xl transition flex items-center gap-2">
+            <span id="waSendSpinner" class="hidden">⏳</span>
+            💬 Enviar a seleccionados
+          </button>
+        </div>
+
+        <!-- WA results -->
+        <div id="waResultsList" class="hidden px-5 py-3 space-y-1 border-t border-gray-100"></div>
+      </div>
+
+      <!-- Form Results -->
       <div id="resultsSection" class="hidden bg-white rounded-2xl shadow p-5 mt-4">
-        <h2 class="font-semibold text-gray-700 mb-3">📊 Resultado del envío</h2>
+        <h2 class="font-semibold text-gray-700 mb-3">📊 Resultado del envío por Form</h2>
         <div id="resultsList" class="space-y-2"></div>
       </div>
     </div>
