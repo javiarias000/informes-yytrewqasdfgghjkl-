@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 const XLSX = require('xlsx');
+const dbModule = require('./db');
 
 const app = express();
 app.use(express.json());
@@ -657,25 +658,98 @@ Responde SOLO con JSON: {"fields":[{"entryId":number,"label":"...","mapping":"ti
   }
 });
 
-// ── API: docentes ────────────────────────────────────────────────────────────
-app.get('/api/docentes', (_req, res) => {
-  res.json({ docentes: loadDocentes() });
+// ── API: docentes (SQLite via db.js) ─────────────────────────────────────────
+app.get('/api/docentes', async (_req, res) => {
+  try {
+    const rows = await dbModule.getAllDocentes();
+    // Map DB column names → camelCase for frontend compat
+    const docentes = rows.map(r => ({
+      id:                   r.id,
+      nombre:               r.nombre,
+      cargo:                r.cargo,
+      celular:              r.celular,
+      correoInstitucional:  r.correo_institucional,
+      correoPersonal:       r.correo_personal,
+      fuente:               r.fuente,
+    }));
+    res.json({ docentes });
+  } catch (e) {
+    console.error('[docentes]', e.message);
+    res.json({ docentes: loadDocentes() }); // fallback to xlsx
+  }
 });
 
-// Crear o actualizar un docente (override sobre el XLSX)
-app.post('/api/docentes/upsert', (req, res) => {
+app.post('/api/docentes/upsert', async (req, res) => {
   const { nombre, celular, correoInstitucional, correoPersonal, cargo } = req.body;
   if (!nombre) return res.json({ success: false, error: 'Falta nombre' });
-  saveDocenteOverride(nombre, {
-    ...(celular             !== undefined && { celular }),
-    ...(correoInstitucional !== undefined && { correoInstitucional }),
-    ...(correoPersonal      !== undefined && { correoPersonal }),
-    ...(cargo               !== undefined && { cargo }),
-  });
-  // Return updated docente record
-  const updated = loadDocentes().find(d => d.nombre === nombre)
-    || { nombre, celular, correoInstitucional, correoPersonal, cargo };
-  res.json({ success: true, docente: updated });
+  try {
+    const phone = celular ? normalizePhone(celular) : undefined;
+    const row = await dbModule.upsertDocente({
+      nombre,
+      cargo:               cargo               || undefined,
+      correoInstitucional: correoInstitucional || undefined,
+      correoPersonal:      correoPersonal      || undefined,
+      celular:             phone               || undefined,
+    });
+    res.json({
+      success: true,
+      docente: {
+        id:                  row.id,
+        nombre:              row.nombre,
+        cargo:               row.cargo,
+        celular:             row.celular,
+        correoInstitucional: row.correo_institucional,
+        correoPersonal:      row.correo_personal,
+      },
+    });
+  } catch (e) {
+    console.error('[docentes/upsert]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Catálogo de cursos con su tutor asignado
+app.get('/api/cursos', async (_req, res) => {
+  try {
+    const rows = await dbModule.getAllCursos();
+    res.json({ cursos: rows });
+  } catch (e) {
+    console.error('[cursos]', e.message);
+    res.json({ cursos: [] });
+  }
+});
+
+// Tabla tutores-cursos completa (join docentes + cursos)
+app.get('/api/tutores-cursos', async (req, res) => {
+  try {
+    const anioLectivo = req.query.anio || '2025-2026';
+    const rows = await dbModule.getAllTutoresCursos(anioLectivo);
+    res.json({ tutoresCursos: rows, anioLectivo });
+  } catch (e) {
+    console.error('[tutores-cursos]', e.message);
+    res.json({ tutoresCursos: [] });
+  }
+});
+
+// Tutor de un curso específico (por nombre exacto del curso)
+app.get('/api/tutor-por-curso', async (req, res) => {
+  const { curso, anio } = req.query;
+  if (!curso) return res.json({ tutor: null });
+  try {
+    const tutor = await dbModule.getTutorByCursoNombre(curso, anio || '2025-2026');
+    res.json({
+      tutor: tutor ? {
+        id:                  tutor.id,
+        nombre:              tutor.nombre,
+        cargo:               tutor.cargo,
+        celular:             tutor.celular,
+        correoInstitucional: tutor.correo_institucional,
+        correoPersonal:      tutor.correo_personal,
+      } : null,
+    });
+  } catch (e) {
+    res.json({ tutor: null });
+  }
 });
 
 // ── API: WhatsApp / Evolution API ─────────────────────────────────────────────

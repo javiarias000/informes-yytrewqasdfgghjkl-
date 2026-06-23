@@ -951,7 +951,7 @@ async function onNuevoSheetChange(id) {
   }
 
   nuevoGroups = data.groups || [];
-  renderNuevoCursos();
+  await renderNuevoCursos();
 }
 
 let _currentDocente = null; // docente record currently shown in card
@@ -1100,7 +1100,21 @@ function tutorEditFormHtml(idx, docenteRec) {
     </div>`;
 }
 
-function renderNuevoCursos() {
+// Cache of tutor→curso mapping from DB (loaded once per session)
+let _tutoresCursosCache = null;
+
+async function loadTutoresCursos() {
+  if (_tutoresCursosCache) return _tutoresCursosCache;
+  try {
+    const r = await fetch(API + 'api/tutores-cursos').then(r => r.json());
+    _tutoresCursosCache = r.tutoresCursos || [];
+  } catch { _tutoresCursosCache = []; }
+  return _tutoresCursosCache;
+}
+
+function invalidateTutoresCache() { _tutoresCursosCache = null; }
+
+async function renderNuevoCursos() {
   const section = document.getElementById('nuevoCursosSection');
   const list    = document.getElementById('nuevoCursosList');
   if (!nuevoGroups.length) { section.classList.add('hidden'); return; }
@@ -1110,11 +1124,27 @@ function renderNuevoCursos() {
   const totalDif = nuevoGroups.reduce((a, g) => a + g.dificultades.length, 0);
   setNuevoInfo(`${nuevoGroups.length} curso(s) · ${totalEst} estudiantes · ${totalDif} con dificultades`);
 
+  const tutoresCursos = await loadTutoresCursos();
+
   list.innerHTML = nuevoGroups.map((g, i) => {
-    // Resolve tutor: from sheet's docenteNombre → docentes list
-    const sheet      = savedSheets.find(s => s.id === (g.sheetId || nuevoSheetId));
-    const tutorName  = sheet?.docenteNombre || '';
-    const tutorRec   = tutorName ? docentes.find(d => d.nombre === tutorName) : null;
+    // 1st: look up tutor by exact course name in tutores_cursos DB
+    const tcEntry = tutoresCursos.find(tc => tc.curso === g.curso);
+    // 2nd fallback: sheet's docenteNombre
+    const sheet   = savedSheets.find(s => s.id === (g.sheetId || nuevoSheetId));
+
+    let tutorRec = null;
+    if (tcEntry) {
+      tutorRec = {
+        id:                  tcEntry.docente_id,
+        nombre:              tcEntry.tutor,
+        cargo:               tcEntry.cargo,
+        celular:             tcEntry.celular,
+        correoInstitucional: tcEntry.correo_institucional,
+        correoPersonal:      tcEntry.correo_personal,
+      };
+    } else if (sheet?.docenteNombre) {
+      tutorRec = docentes.find(d => d.nombre === sheet.docenteNombre) || { nombre: sheet.docenteNombre };
+    }
 
     return `
     <div class="border-b border-gray-100 last:border-0">
@@ -1215,6 +1245,9 @@ async function saveCourseDocente(i) {
   const idx = docentes.findIndex(d => d.nombre === nombre);
   if (idx >= 0) docentes[idx] = res.docente;
   else           docentes.push(res.docente);
+
+  // Invalidate tutores-cursos cache so next renderNuevoCursos sees fresh data
+  invalidateTutoresCache();
 
   // Update the sheet's docenteNombre so the card also reflects the change
   const sheet = savedSheets.find(s => s.id === nuevoSheetId);

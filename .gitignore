@@ -13,3 +13,6 @@ Datos/*.xls
 # Historial de envíos y overrides de docentes (datos sensibles)
 submissions.json
 docentes_overrides.json
+
+# Base de datos SQLite (datos personales — regenerar con seed-db.js)
+conservatorio.db
