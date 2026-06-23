@@ -843,6 +843,264 @@ function renderResults(results, skipped) {
   section.scrollIntoView({ behavior: 'smooth' });
 }
 
+// ── Nuevo Informe – método selector ───────────────────────────────────────────
+let nuevoMethod  = null;
+let nuevoSheetId = null;
+let nuevoGroups  = []; // groups loaded from selected sheet
+
+function selectNuevoMethod(method) {
+  nuevoMethod = method;
+
+  const isWa   = method === 'wa';
+  const isForm = method === 'form';
+
+  // Highlight selected button
+  const btnWa   = document.getElementById('btnMethodWa');
+  const btnForm = document.getElementById('btnMethodForm');
+  if (btnWa)   btnWa.className   = btnWa.className.replace(/border-\w+-\d+|bg-\w+-\d+/g, '') +
+    (isWa   ? ' border-green-500 bg-green-50'   : ' border-gray-200');
+  if (btnForm) btnForm.className = btnForm.className.replace(/border-\w+-\d+|bg-\w+-\d+/g, '') +
+    (isForm ? ' border-indigo-500 bg-indigo-50' : ' border-gray-200');
+
+  // Update send button label/color
+  const btn   = document.getElementById('nuevoSendBtn');
+  const label = document.getElementById('nuevoSendLabel');
+  if (isWa) {
+    if (btn)   btn.className = btn.className.replace(/bg-\w+-600|hover:bg-\w+-700/g, 'bg-green-600 hover:bg-green-700');
+    if (label) label.textContent = '💬 Enviar por WhatsApp';
+  } else {
+    if (btn)   btn.className = btn.className.replace(/bg-\w+-600|hover:bg-\w+-700/g, 'bg-indigo-600 hover:bg-indigo-700');
+    if (label) label.textContent = '📋 Enviar por Formulario';
+  }
+
+  // Show/hide Form URL field
+  document.getElementById('nuevoFormUrlRow')?.classList.toggle('hidden', !isForm);
+
+  // Show/hide WA warning if not connected
+  if (isWa && !waConnected) {
+    setNuevoInfo('⚠️ WhatsApp no conectado. Ve a la sección WhatsApp primero.');
+  } else {
+    setNuevoInfo('');
+  }
+
+  // Show the form section
+  document.getElementById('nuevoFormSection').classList.remove('hidden');
+
+  // Populate sheet selector
+  populateNuevoSheetSelect();
+}
+
+function populateNuevoSheetSelect() {
+  const sel = document.getElementById('nuevoSheetSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Selecciona una hoja —</option>';
+
+  // Group by URL/institution for optgroups
+  const byUrl = {};
+  for (const s of savedSheets) {
+    const key = s.institution || s.url;
+    if (!byUrl[key]) byUrl[key] = [];
+    byUrl[key].push(s);
+  }
+
+  for (const [label, sheets] of Object.entries(byUrl)) {
+    const grp = document.createElement('optgroup');
+    grp.label = label;
+    for (const s of sheets) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = [s.tabName, s.materia, s.docenteNombre].filter(Boolean).join(' · ') || s.tabName || s.id;
+      grp.appendChild(opt);
+    }
+    sel.appendChild(grp);
+  }
+}
+
+async function onNuevoSheetChange(id) {
+  nuevoSheetId = id;
+  nuevoGroups  = [];
+  document.getElementById('nuevoCursosSection').classList.add('hidden');
+  document.getElementById('nuevoDocenteRow').classList.remove('hidden');
+
+  if (!id) return;
+
+  const sheet = savedSheets.find(s => s.id === id);
+
+  // Pre-fill docente
+  const nameEl  = document.getElementById('nuevoDocenteName');
+  const phoneEl = document.getElementById('nuevoDocentePhone');
+  if (nameEl && sheet?.docenteNombre) {
+    nameEl.value = sheet.docenteNombre;
+    onNuevoDocenteInput(sheet.docenteNombre);
+  } else if (nameEl) {
+    nameEl.value = '';
+    if (phoneEl) { phoneEl.textContent = ''; phoneEl.classList.add('hidden'); }
+  }
+
+  // Load data
+  document.getElementById('nuevoLoading').classList.remove('hidden');
+  if (!sheetData[id] || sheetData[id].status !== 'ok') {
+    await loadSheetData(id);
+  }
+  document.getElementById('nuevoLoading').classList.add('hidden');
+
+  const data = sheetData[id];
+  if (!data || data.status !== 'ok') {
+    setNuevoInfo('❌ No se pudieron cargar los datos de esta hoja.');
+    return;
+  }
+
+  nuevoGroups = data.groups || [];
+  renderNuevoCursos();
+}
+
+function onNuevoDocenteInput(val) {
+  const d      = docentes.find(d => d.nombre.toLowerCase() === val.toLowerCase());
+  const phoneEl = document.getElementById('nuevoDocentePhone');
+  if (phoneEl) {
+    if (d?.celular) {
+      phoneEl.textContent = '📱 ' + d.celular;
+      phoneEl.classList.remove('hidden');
+    } else {
+      phoneEl.classList.add('hidden');
+    }
+  }
+}
+
+function renderNuevoCursos() {
+  const section = document.getElementById('nuevoCursosSection');
+  const list    = document.getElementById('nuevoCursosList');
+  if (!nuevoGroups.length) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const totalEst = nuevoGroups.reduce((a, g) => a + g.students.length, 0);
+  const totalDif = nuevoGroups.reduce((a, g) => a + g.dificultades.length, 0);
+  setNuevoInfo(`${nuevoGroups.length} curso(s) · ${totalEst} estudiantes · ${totalDif} con dificultades`);
+
+  list.innerHTML = nuevoGroups.map((g, i) => `
+    <div class="flex items-center gap-3 px-5 py-2.5">
+      <input type="checkbox" id="nc-${i}" checked class="w-4 h-4 accent-indigo-600 shrink-0" />
+      <div class="flex-1 min-w-0">
+        <span class="font-medium text-gray-800 text-sm">${esc(g.curso)}</span>
+        <span class="ml-2 text-xs text-gray-400">${g.students.length} est.</span>
+        ${g.dificultades.length
+          ? `<span class="ml-1 text-xs text-orange-600 font-medium">⚠️ ${g.dificultades.length} dificultad(es)</span>`
+          : `<span class="ml-1 text-xs text-green-600">✅ sin dificultades</span>`}
+      </div>
+      <button onclick="toggleNuevoCursoDetail(${i})" class="text-xs text-gray-400 hover:text-gray-600 shrink-0">···</button>
+    </div>
+    <div id="nc-det-${i}" class="hidden px-5 pb-2">
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-1">
+        ${g.students.map(s => `
+          <div class="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg ${s.promedio < 7 ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}">
+            <span>${s.promedio < 7 ? '⚠️' : '✅'}</span>
+            <span class="flex-1 truncate">${esc(s.nombre)}</span>
+            <span class="font-mono font-semibold">${s.promedio}</span>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function toggleNuevoCursoDetail(i) {
+  document.getElementById(`nc-det-${i}`)?.classList.toggle('hidden');
+}
+
+function setNuevoInfo(msg) {
+  const el = document.getElementById('nuevoSendInfo');
+  if (el) el.textContent = msg;
+}
+
+async function submitNuevoInforme() {
+  if (!nuevoMethod) { alert('Elige primero el método de envío.'); return; }
+  if (!nuevoSheetId) { alert('Selecciona una hoja.'); return; }
+  if (!nuevoGroups.length) { alert('No hay cursos cargados.'); return; }
+
+  const contenidos = document.getElementById('nuevoContenidos')?.value.trim() || '';
+  const acciones   = document.getElementById('nuevoAcciones')?.value.trim()   || '';
+  const docenteVal = document.getElementById('nuevoDocenteName')?.value.trim() || '';
+
+  // Which courses are checked?
+  const selected = nuevoGroups.filter((_, i) => document.getElementById(`nc-${i}`)?.checked);
+  if (!selected.length) { alert('Selecciona al menos un curso.'); return; }
+
+  const spinner = document.getElementById('nuevoSendSpinner');
+  const resBox  = document.getElementById('nuevoResultados');
+  spinner.classList.remove('hidden');
+  resBox.classList.add('hidden');
+
+  let results = [];
+
+  if (nuevoMethod === 'wa') {
+    // ── WhatsApp ──────────────────────────────────────────────────────────────
+    if (!waConnected) { spinner.classList.add('hidden'); alert('WhatsApp no conectado.'); return; }
+
+    const docenteNombre = docenteVal;
+    const docenteRec    = docentes.find(d => d.nombre === docenteNombre);
+    const phone         = docenteRec?.celular
+      || savedSheets.find(s => s.id === nuevoSheetId)?.docentePhone || '';
+
+    if (!phone) {
+      spinner.classList.add('hidden');
+      alert('No se encontró el teléfono del docente. Asegúrate de seleccionarlo correctamente.');
+      return;
+    }
+
+    const groups = selected.map(g => ({
+      curso:        g.curso,
+      students:     g.students,
+      dificultades: g.dificultades,
+    }));
+    const msg = buildWaMessage(groups, docenteNombre, selected[0].tabName || '');
+    const res = await fetch(API + 'api/wa/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instanceName: waInstance, phone, message: msg }),
+    }).then(r => r.json());
+
+    results = [{ label: `${docenteNombre} – ${selected.length} curso(s)`, success: res.success, error: res.error }];
+
+  } else {
+    // ── Google Forms ──────────────────────────────────────────────────────────
+    const formUrl = document.getElementById('formUrl')?.value.trim();
+    if (!formUrl) { spinner.classList.add('hidden'); alert('Ingresa la URL del formulario.'); return; }
+
+    const submissions = selected.map(g => ({
+      dropdownOption: g.dropdownOption || g.curso,
+      docente:        docenteVal,
+      materia:        g.materia || savedSheets.find(s => s.id === nuevoSheetId)?.materia || '',
+      contenidos,
+      acciones,
+      dificultades:   g.dificultades,
+      students:       g.students,
+      formText:       buildFormText(contenidos, g.dificultades, acciones),
+      tabName:        g.tabName || '',
+      sheetId:        nuevoSheetId,
+      docenteNombre:  docenteVal,
+      docentePhone:   docentes.find(d => d.nombre === docenteVal)?.celular || '',
+    }));
+
+    if (!confirm(`Enviar ${submissions.length} formulario(s)?`)) {
+      spinner.classList.add('hidden'); return;
+    }
+
+    const res = await fetch(API + 'api/submit-forms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ submissions, formUrl, formFields }),
+    }).then(r => r.json());
+
+    results = res.results || [];
+    loadHistory();
+  }
+
+  spinner.classList.add('hidden');
+  resBox.classList.remove('hidden');
+  resBox.innerHTML = results.map(r => `
+    <div class="flex items-center gap-2 text-xs py-1">
+      <span>${r.success ? '✅' : '❌'}</span>
+      <span class="font-medium flex-1">${esc(r.label)}</span>
+      ${r.error ? `<span class="text-red-500">${esc(r.error)}</span>` : ''}
+    </div>`).join('');
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function showLoadError(msg) {
   const el = document.getElementById('loadError');
@@ -890,6 +1148,7 @@ async function loadFromStorage() {
     if (fu) { const el = document.getElementById('formUrl'); if (el) el.value = fu; }
 
     renderSheetList();
+    populateNuevoSheetSelect();
 
     // Reload ALL sheets in background (not just enabled)
     for (const sheet of savedSheets) {

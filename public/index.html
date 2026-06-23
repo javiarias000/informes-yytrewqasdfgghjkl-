@@ -108,88 +108,119 @@
     <div id="view-nuevo" class="view">
       <h1 class="text-xl font-bold text-gray-800 mb-4">📤 Nuevo informe</h1>
 
-      <div class="bg-white rounded-2xl shadow p-5 space-y-4">
-        <h2 class="font-semibold text-gray-700">✏️ Formulario Google</h2>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">URL del Google Form</label>
-          <div class="flex gap-2">
-            <input id="formUrl" type="text" placeholder="https://docs.google.com/forms/d/e/..."
-              class="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-400 text-xs font-mono" />
-            <button onclick="analyzeForm()"
-              class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap flex items-center gap-1">
-              <span id="analyzeSpinner" class="hidden">⏳</span>
-              🔍 Analizar
-            </button>
-          </div>
-          <p id="formAnalysisStatus" class="text-xs text-gray-400 mt-1"></p>
-        </div>
-        <div id="formFieldsSection" class="hidden space-y-3"></div>
-        <div class="flex gap-3">
-          <button onclick="loadAll()"
-            class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm">
-            <span id="loadSpinner" class="hidden">⏳</span>
-            👁 Vista previa
+      <!-- Step 1 · Elegir método -->
+      <div class="bg-white rounded-2xl shadow p-5 mb-4">
+        <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">¿Cómo deseas enviar?</p>
+        <div class="grid grid-cols-2 gap-3">
+          <button id="btnMethodWa" onclick="selectNuevoMethod('wa')"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border-2 border-gray-200 hover:border-green-400 hover:bg-green-50 transition">
+            <span class="text-3xl">💬</span>
+            <span class="font-semibold text-gray-700">WhatsApp</span>
+            <span class="text-xs text-gray-400 text-center">Mensaje directo al docente</span>
           </button>
-          <button onclick="sendAll()"
-            class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 text-sm">
-            <span id="sendSpinner" class="hidden">⏳</span>
-            📤 Enviar informes
+          <button id="btnMethodForm" onclick="selectNuevoMethod('form')"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border-2 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 transition">
+            <span class="text-3xl">📋</span>
+            <span class="font-semibold text-gray-700">Formulario</span>
+            <span class="text-xs text-gray-400 text-center">Envío a Google Forms</span>
           </button>
         </div>
-        <div id="loadError" class="hidden bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-xs whitespace-pre-line"></div>
       </div>
 
-      <!-- Previews -->
-      <div id="previewSection" class="hidden mt-4">
-        <h2 class="font-semibold text-gray-700 mb-3">👁 Vista previa por curso</h2>
-        <div id="previewList" class="space-y-3"></div>
-      </div>
+      <!-- Step 2 · Formulario del informe -->
+      <div id="nuevoFormSection" class="hidden bg-white rounded-2xl shadow overflow-hidden mb-4">
 
-      <!-- WhatsApp send panel -->
-      <div id="waSendPanel" class="hidden mt-4 bg-white rounded-2xl shadow overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+        <!-- Hoja + Período -->
+        <div class="px-5 pt-5 pb-3 border-b border-gray-100 space-y-3">
+          <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Datos del informe</p>
+
           <div>
-            <h2 class="font-semibold text-gray-700">💬 Enviar por WhatsApp</h2>
-            <p class="text-xs text-gray-400 mt-0.5">Selecciona los docentes a quienes enviar el informe</p>
+            <label class="block text-xs font-medium text-gray-500 mb-1">📄 Hoja de calificaciones</label>
+            <select id="nuevoSheetSelect" onchange="onNuevoSheetChange(this.value)"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="">— Selecciona una hoja —</option>
+            </select>
           </div>
-          <div id="waPanelStatus" class="text-xs"></div>
+
+          <!-- Docente (auto o seleccionable) -->
+          <div id="nuevoDocenteRow" class="hidden">
+            <label class="block text-xs font-medium text-gray-500 mb-1">👤 Docente</label>
+            <div class="flex gap-2 items-center">
+              <input id="nuevoDocenteName" type="text" list="docentesList" placeholder="Nombre del docente"
+                oninput="onNuevoDocenteInput(this.value)"
+                class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              <span id="nuevoDocentePhone" class="text-xs text-green-700 bg-green-50 px-3 py-1.5 rounded-xl border border-green-200 hidden"></span>
+            </div>
+          </div>
+
+          <!-- Form URL (solo método Form) -->
+          <div id="nuevoFormUrlRow" class="hidden">
+            <label class="block text-xs font-medium text-gray-500 mb-1">🔗 URL del Google Form</label>
+            <div class="flex gap-2">
+              <input id="formUrl" type="text" placeholder="https://docs.google.com/forms/d/e/..."
+                class="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              <button onclick="analyzeForm()"
+                class="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 font-semibold px-3 py-2 rounded-xl text-xs flex items-center gap-1 whitespace-nowrap">
+                <span id="analyzeSpinner" class="hidden">⏳</span> 🔍 Analizar
+              </button>
+            </div>
+            <p id="formAnalysisStatus" class="text-xs text-gray-400 mt-1"></p>
+            <div id="formFieldsSection" class="hidden mt-2 space-y-2"></div>
+          </div>
         </div>
 
-        <!-- Not connected warning -->
-        <div id="waPanelNotConnected" class="hidden px-5 py-4 bg-yellow-50 flex items-center gap-3">
-          <span class="text-lg">⚠️</span>
-          <div>
-            <p class="text-xs font-semibold text-yellow-800">WhatsApp no conectado</p>
-            <button onclick="showSection('whatsapp')" class="text-xs text-yellow-700 underline">Ir a configurar WhatsApp →</button>
-          </div>
+        <!-- Contenidos -->
+        <div class="px-5 py-3 border-b border-gray-100">
+          <label class="block text-xs font-medium text-gray-500 mb-1">✏️ Contenidos trabajados</label>
+          <textarea id="nuevoContenidos" rows="3" placeholder="Describe los contenidos trabajados en el período…"
+            class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
         </div>
 
-        <!-- Docente list -->
-        <div id="waSendList" class="divide-y divide-gray-100"></div>
-
-        <!-- Actions -->
-        <div class="px-5 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
-          <div class="flex gap-2">
-            <button onclick="toggleAllWaChecks(true)"  class="text-xs text-gray-500 hover:text-gray-700">Seleccionar todos</button>
-            <span class="text-gray-300">|</span>
-            <button onclick="toggleAllWaChecks(false)" class="text-xs text-gray-500 hover:text-gray-700">Ninguno</button>
+        <!-- Cursos y dificultades (auto del sheet) -->
+        <div id="nuevoCursosSection" class="hidden border-b border-gray-100">
+          <div class="px-5 pt-3 pb-1">
+            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Cursos detectados</p>
           </div>
-          <button onclick="sendSelectedWA()"
-            class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-5 py-2 rounded-xl transition flex items-center gap-2">
-            <span id="waSendSpinner" class="hidden">⏳</span>
-            💬 Enviar a seleccionados
+          <div id="nuevoCursosList" class="divide-y divide-gray-50"></div>
+        </div>
+
+        <!-- Acciones -->
+        <div class="px-5 py-3 border-b border-gray-100">
+          <label class="block text-xs font-medium text-gray-500 mb-1">🛠 Acciones con estudiantes con dificultades</label>
+          <textarea id="nuevoAcciones" rows="2" placeholder="Ej: Reunión con padres de familia, refuerzo académico…"
+            class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"></textarea>
+        </div>
+
+        <!-- Loading state -->
+        <div id="nuevoLoading" class="hidden px-5 py-4 text-xs text-gray-400 flex items-center gap-2">
+          <span class="animate-spin">⏳</span> Cargando datos de la hoja…
+        </div>
+
+        <!-- Send -->
+        <div class="px-5 py-4 bg-gray-50 flex items-center justify-between">
+          <p id="nuevoSendInfo" class="text-xs text-gray-400"></p>
+          <button onclick="submitNuevoInforme()" id="nuevoSendBtn"
+            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2.5 rounded-xl transition flex items-center gap-2 text-sm disabled:opacity-50">
+            <span id="nuevoSendSpinner" class="hidden">⏳</span>
+            <span id="nuevoSendLabel">Enviar informe</span>
           </button>
         </div>
 
-        <!-- WA results -->
-        <div id="waResultsList" class="hidden px-5 py-3 space-y-1 border-t border-gray-100"></div>
+        <!-- Results -->
+        <div id="nuevoResultados" class="hidden px-5 py-4 border-t border-gray-100 space-y-1"></div>
       </div>
 
-      <!-- Form Results -->
-      <div id="resultsSection" class="hidden bg-white rounded-2xl shadow p-5 mt-4">
-        <h2 class="font-semibold text-gray-700 mb-3">📊 Resultado del envío por Form</h2>
-        <div id="resultsList" class="space-y-2"></div>
-      </div>
+      <!-- hidden inputs kept for internal use by legacy functions -->
+      <input id="loadSpinner" type="hidden" />
+      <input id="sendSpinner" type="hidden" />
+      <div id="loadError"     class="hidden"></div>
+      <div id="previewSection"  class="hidden"><div id="previewList"></div></div>
+      <div id="resultsSection"  class="hidden"><div id="resultsList"></div></div>
+      <div id="waSendPanel"     class="hidden"><div id="waSendList"></div><div id="waResultsList"></div></div>
+      <div id="waSendSpinner"   class="hidden"></div>
+      <div id="waPanelStatus"   class="hidden"></div>
+      <div id="waPanelNotConnected" class="hidden"></div>
+      <div id="waSendAllBtn"    class="hidden"></div>
     </div>
 
     <!-- ── HOJAS ── -->
