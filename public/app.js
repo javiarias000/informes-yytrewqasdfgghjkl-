@@ -1,199 +1,464 @@
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── Base URL (works behind code-server proxy /proxy/3001/ or direct) ──────────
+const API = (() => {
+  const p = location.pathname;
+  return p.endsWith('/') ? p : p.slice(0, p.lastIndexOf('/') + 1);
+})();
 
-let subjectCounter = 0;
-const subjects = {}; // id → { name, sheetUrl, tabs, tabColumns, contactTab, gradeTab, cols }
+// ── State ──────────────────────────────────────────────────────────────────────
+// savedSheets: [{ id, url, tabName, materia, contactTab, institution, contenidos }]
+// enabledIds: Set<id>
+// sheetData:  { id: { status, groups, contenidos } }
+// tabTables:  { id: { status, columns, data } }
+let savedSheets  = [];
+let sheetData    = {};
+let tabTables    = {};
+let enabledIds   = new Set();
+let expandedIds  = new Set(); // tabs with table visible
 let loadedGroups = [];
-let formFields = []; // populated after analyzeForm()
+let formFields   = [];
 
-const INITIAL_SUBJECTS = ['Arreglos Musicales', 'Ensamble de Guitarras', 'Guitarra Clásica'];
-
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
+// ── Auth ───────────────────────────────────────────────────────────────────────
 async function checkAuth() {
-  const { authenticated } = await fetch('/api/auth-status').then(r => r.json());
+  const { authenticated } = await fetch(API + 'api/auth-status').then(r => r.json());
   document.getElementById('authNeeded').classList.toggle('hidden', authenticated);
   document.getElementById('authOk').classList.toggle('hidden', !authenticated);
-  if (new URLSearchParams(location.search).get('auth') === 'ok') history.replaceState({}, '', '/');
+  if (new URLSearchParams(location.search).get('auth') === 'ok')
+    history.replaceState({}, '', location.pathname);
 }
 
-// ── Subject cards ─────────────────────────────────────────────────────────────
+// ── Sheet list UI ──────────────────────────────────────────────────────────────
+function renderSheetList() {
+  const list = document.getElementById('sheetList');
+  list.innerHTML = '';
 
-function addSubject(name = '', savedState = null) {
-  const id = ++subjectCounter;
-  const enabled = savedState ? savedState.enabled !== false : true;
-  subjects[id] = {
-    name,
-    sheetUrl: savedState?.sheetUrl || '',
-    tabs: [],
-    tabColumns: {},
-    contactTab: savedState?.contactTab || '',
-    gradeTab: savedState?.gradeTab || '',
-    cols: savedState?.cols || {},
-    contenidos: savedState?.contenidos || '',
-    enabled,
-  };
+  if (!savedSheets.length) {
+    list.innerHTML = '<div class="text-center py-6 text-gray-400 text-xs">No hay hojas guardadas. Agrega una con el botón de arriba.</div>';
+    return;
+  }
 
-  const card = document.createElement('div');
-  card.id = `card-${id}`;
-  card.className = `bg-white rounded-2xl shadow p-5 space-y-3 transition-opacity ${enabled ? '' : 'opacity-50'}`;
-  card.innerHTML = subjectCardHTML(id, name, enabled);
-  document.getElementById('subjectCards').appendChild(card);
-  return id;
-}
+  // Group entries by URL so tabs from the same sheet appear together
+  const byUrl = {};
+  for (const sheet of savedSheets) {
+    const key = sheet.url;
+    if (!byUrl[key]) byUrl[key] = [];
+    byUrl[key].push(sheet);
+  }
 
-function updateCardStyle(id) {
-  const card = document.getElementById(`card-${id}`);
-  const enabled = subjects[id]?.enabled !== false;
-  if (card) card.classList.toggle('opacity-50', !enabled);
-  const label = document.getElementById(`chklabel-${id}`);
-  if (label) {
-    label.textContent = enabled ? 'Activa' : 'Inactiva';
-    label.className = `text-xs font-medium ${enabled ? 'text-green-600' : 'text-gray-400'}`;
+  for (const [url, sheets] of Object.entries(byUrl)) {
+    const first = sheets[0];
+
+    // URL group header
+    const header = document.createElement('div');
+    header.className = 'px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between';
+    header.innerHTML = `
+      <div class="min-w-0 flex-1">
+        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">${esc(first.institution || 'Hoja de calificaciones')}</span>
+        <span class="ml-2 text-xs text-gray-400 font-mono truncate">${esc(shortUrl(url))}</span>
+      </div>
+      <div class="flex gap-2 ml-2">
+        ${first.materia
+          ? `<span class="text-xs text-indigo-600 font-medium">${esc(first.materia)}</span>`
+          : ''}
+        <button onclick="deleteSheetGroup('${esc(url)}')"
+          class="text-gray-300 hover:text-red-400 text-sm" title="Eliminar esta hoja y todos sus tabs">✕</button>
+      </div>`;
+    list.appendChild(header);
+
+    // One row per tab
+    for (const sheet of sheets) {
+      const data     = sheetData[sheet.id] || {};
+      const checked  = enabledIds.has(sheet.id);
+      const expanded = expandedIds.has(sheet.id);
+      const loaded   = data.status === 'ok';
+
+      const row = document.createElement('div');
+      row.className = 'sheet-row flex items-center gap-3 px-4 py-3 bg-white hover:bg-gray-50 border-b border-gray-100';
+      row.innerHTML = `
+        <input type="checkbox" id="chk-${sheet.id}" ${checked ? 'checked' : ''}
+          onchange="toggleSheet('${sheet.id}', this.checked)"
+          class="w-4 h-4 accent-blue-600 cursor-pointer shrink-0" />
+        <label for="chk-${sheet.id}" class="flex-1 cursor-pointer">
+          <span class="font-bold text-base text-gray-900">${esc(sheet.tabName)}</span>
+          ${sheet.materia ? `<span class="ml-2 text-xs text-gray-400">${esc(sheet.materia)}</span>` : ''}
+        </label>
+        ${statusBadge(data.status, data.groups)}
+        ${loaded ? `
+          <button onclick="toggleTabTable('${sheet.id}')"
+            class="text-xs px-2 py-1 rounded-lg border transition shrink-0 ${expanded ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'}">
+            ${expanded ? '▲ Ocultar' : '▼ Ver tabla'}
+          </button>` : ''}
+        <button onclick="reloadTab('${sheet.id}')"
+          class="text-gray-300 hover:text-blue-500 text-sm shrink-0" title="Recargar">↻</button>
+      `;
+      list.appendChild(row);
+
+      // Expanded: table + contenidos
+      if (expanded && loaded) {
+        const expDiv = document.createElement('div');
+        expDiv.className = 'border-b border-gray-100 bg-gray-50';
+
+        // Table section
+        const tableWrap = document.createElement('div');
+        tableWrap.className = 'overflow-x-auto px-4 pt-3';
+        tableWrap.id = `tbl-${sheet.id}`;
+        const tt = tabTables[sheet.id];
+        if (!tt || tt.status === 'idle') {
+          tableWrap.innerHTML = '<p class="text-xs text-gray-400 py-2">Cargando tabla...</p>';
+          loadTabTable(sheet.id); // fire off load
+        } else if (tt.status === 'loading') {
+          tableWrap.innerHTML = '<p class="text-xs text-blue-500 py-2 animate-pulse">⏳ Cargando tabla...</p>';
+        } else if (tt.status === 'error') {
+          tableWrap.innerHTML = `<p class="text-xs text-red-500 py-2">❌ ${esc(tt.error)}</p>`;
+        } else {
+          tableWrap.innerHTML = buildTableHTML(tt);
+        }
+        expDiv.appendChild(tableWrap);
+
+        // Contenidos
+        const contDiv = document.createElement('div');
+        contDiv.className = 'px-4 pb-3 pt-2';
+        contDiv.innerHTML = `
+          <textarea id="cont-${sheet.id}" rows="2"
+            placeholder="Contenidos trabajados (${esc(sheet.tabName)})..."
+            oninput="updateContenidos('${sheet.id}', this.value)"
+            class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none bg-white"
+          >${esc(data.contenidos || '')}</textarea>`;
+        expDiv.appendChild(contDiv);
+        list.appendChild(expDiv);
+      } else if (checked && loaded && !expanded) {
+        // Contenidos visible even when table is collapsed (if checked)
+        const contDiv = document.createElement('div');
+        contDiv.className = 'px-4 pb-3 bg-white border-b border-gray-100';
+        contDiv.innerHTML = `
+          <textarea id="cont-${sheet.id}" rows="2"
+            placeholder="Contenidos trabajados (${esc(sheet.tabName)})..."
+            oninput="updateContenidos('${sheet.id}', this.value)"
+            class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"
+          >${esc(data.contenidos || '')}</textarea>`;
+        list.appendChild(contDiv);
+      }
+    }
   }
 }
 
-function subjectCardHTML(id, name, enabled = true) {
+function updateContenidos(id, val) {
+  if (sheetData[id]) sheetData[id].contenidos = val;
+  save();
+}
+
+function statusBadge(status, groups) {
+  if (!status || status === 'idle')
+    return `<span class="text-xs text-gray-400 shrink-0">Sin cargar</span>`;
+  if (status === 'loading')
+    return `<span class="text-xs text-blue-500 shrink-0 animate-pulse">⏳ Cargando...</span>`;
+  if (status === 'ok')
+    return `<span class="text-xs text-green-600 font-medium shrink-0">✅ ${groups?.length || 0} cursos</span>`;
+  if (status === 'unknown')
+    return `<span class="text-xs text-yellow-600 shrink-0">⚠️ Sin coincidencia</span>`;
+  return `<span class="text-xs text-red-500 shrink-0">❌ Error</span>`;
+}
+
+function shortUrl(url) {
+  try {
+    const m = (url || '').match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+    return m ? `…${m[1].slice(0, 10)}…` : url;
+  } catch(_) { return url || ''; }
+}
+
+// ── Add sheet form ─────────────────────────────────────────────────────────────
+function openAddSheet() {
+  document.getElementById('addSheetForm').classList.remove('hidden');
+  document.getElementById('newSheetUrl').focus();
+}
+function closeAddSheet() {
+  document.getElementById('addSheetForm').classList.add('hidden');
+  document.getElementById('addSheetError').classList.add('hidden');
+  document.getElementById('addSheetStatus').textContent = '';
+  document.getElementById('newSheetMateria').value = '';
+  document.getElementById('newSheetUrl').value  = '';
+}
+
+async function confirmAddSheet() {
+  const rawUrl  = document.getElementById('newSheetUrl').value.trim();
+  const materia = document.getElementById('newSheetMateria').value.trim();
+  const url     = rawUrl.replace(/[?#].*$/, '').trim();
+  const errEl   = document.getElementById('addSheetError');
+  const statEl  = document.getElementById('addSheetStatus');
+
+  if (!url) { errEl.textContent = 'Ingresa la URL.'; errEl.classList.remove('hidden'); return; }
+  errEl.classList.add('hidden');
+
+  // Check for duplicate
+  if (savedSheets.some(s => s.url === url)) {
+    errEl.textContent = 'Esta URL ya está en la lista.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  statEl.textContent = '⏳ Detectando hojas...';
+
+  try {
+    const res = await fetch(API + 'api/smart-load', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sheetUrl: url }),
+    }).then(r => r.json());
+
+    if (!res.success || !res.recognized) {
+      errEl.textContent = '❌ ' + (res.error || 'Formato no reconocido');
+      errEl.classList.remove('hidden');
+      statEl.textContent = '';
+      return;
+    }
+
+    // grade tabs = matchedTabs minus Contacto
+    const gradeTabs = (res.gradeTabs || res.matchedTabs || [])
+      .filter(t => !t.toLowerCase().includes('contacto'));
+
+    if (!gradeTabs.length) {
+      errEl.textContent = '⚠️ No se encontraron hojas de calificaciones en esta URL.';
+      errEl.classList.remove('hidden');
+      statEl.textContent = '';
+      return;
+    }
+
+    // Create one entry per grade tab
+    const groupId = 'sg_' + Date.now();
+    for (const tab of gradeTabs) {
+      const id = `${groupId}_${tab}`;
+      savedSheets.push({
+        id,
+        url,
+        groupId,
+        tabName:     tab,
+        materia:     materia || '',
+        contactTab:  res.contactTab || 'Contacto',
+        institution: res.format || '',
+        contenidos:  '',
+      });
+      sheetData[id] = { status: 'idle', groups: [], contenidos: '' };
+      enabledIds.add(id);
+    }
+
+    save();
+    closeAddSheet();
+    renderSheetList();
+
+    // Auto-load the tabs that are enabled
+    statEl.textContent = '';
+    loadEnabledTabs(groupId);
+  } catch (e) {
+    errEl.textContent = '❌ ' + e.message;
+    errEl.classList.remove('hidden');
+    statEl.textContent = '';
+  }
+}
+
+async function loadEnabledTabs(groupId) {
+  const toLoad = savedSheets.filter(s => s.groupId === groupId && enabledIds.has(s.id));
+  for (const sheet of toLoad) {
+    await loadSheetData(sheet.id);
+  }
+}
+
+// ── Load one tab's data ────────────────────────────────────────────────────────
+async function loadSheetData(id) {
+  const sheet = savedSheets.find(s => s.id === id);
+  if (!sheet) return;
+
+  sheetData[id] = { ...(sheetData[id] || {}), status: 'loading' };
+  renderSheetList();
+
+  try {
+    const res = await fetch(API + 'api/smart-load', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        sheetUrl:    sheet.url,
+        gradeTab:    sheet.tabName,
+        subjectName: sheet.materia || sheet.tabName,
+      }),
+    }).then(r => r.json());
+
+    if (res.success && res.recognized && res.groups?.length > 0) {
+      sheetData[id] = {
+        status:     'ok',
+        groups:     res.groups,
+        contenidos: sheetData[id]?.contenidos || '',
+      };
+    } else if (res.success && res.recognized) {
+      sheetData[id] = {
+        status:     'unknown',
+        groups:     [],
+        contenidos: sheetData[id]?.contenidos || '',
+        warning:    res.warning,
+      };
+    } else {
+      sheetData[id] = {
+        status:     'error',
+        groups:     [],
+        contenidos: sheetData[id]?.contenidos || '',
+        error:      res.error,
+      };
+    }
+  } catch (e) {
+    sheetData[id] = { status: 'error', groups: [], contenidos: sheetData[id]?.contenidos || '', error: e.message };
+  }
+
+  save();
+  renderSheetList();
+}
+
+async function reloadTab(id) {
+  sheetData[id] = { ...(sheetData[id] || {}), status: 'idle', groups: [] };
+  delete tabTables[id];
+  await loadSheetData(id);
+}
+
+function toggleTabTable(id) {
+  if (expandedIds.has(id)) expandedIds.delete(id);
+  else                     expandedIds.add(id);
+  renderSheetList();
+}
+
+async function loadTabTable(id) {
+  const sheet = savedSheets.find(s => s.id === id);
+  if (!sheet) return;
+
+  tabTables[id] = { status: 'loading' };
+  // update only the table wrapper without full re-render
+  const wrap = document.getElementById(`tbl-${id}`);
+  if (wrap) wrap.innerHTML = '<p class="text-xs text-blue-500 py-2 animate-pulse">⏳ Cargando tabla...</p>';
+
+  try {
+    const res = await fetch(API + 'api/tab-table', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ sheetUrl: sheet.url, tabName: sheet.tabName }),
+    }).then(r => r.json());
+
+    if (res.success) {
+      tabTables[id] = { status: 'ok', columns: res.columns, data: res.data, label: res.label };
+    } else {
+      tabTables[id] = { status: 'error', error: res.error };
+    }
+  } catch (e) {
+    tabTables[id] = { status: 'error', error: e.message };
+  }
+
+  const wrap2 = document.getElementById(`tbl-${id}`);
+  if (wrap2) {
+    const tt = tabTables[id];
+    if (tt.status === 'ok') wrap2.innerHTML = buildTableHTML(tt);
+    else wrap2.innerHTML = `<p class="text-xs text-red-500 py-2">❌ ${esc(tt.error)}</p>`;
+  }
+}
+
+function buildTableHTML(tt) {
+  const gradeCol = tt.columns[tt.columns.length - 1]; // last col = grade/promedio
+  const rows = tt.data.map(row => {
+    const grade = parseFloat(row[gradeCol]) || 0;
+    const low   = grade > 0 && grade < 7;
+    return `<tr class="${low ? 'bg-red-50' : ''}">
+      ${tt.columns.map(c => {
+        const isGrade = c === gradeCol;
+        return `<td class="border border-gray-200 px-2 py-1 text-xs ${isGrade ? 'font-bold text-center ' + (low ? 'text-red-700' : 'text-green-700') : 'text-gray-700'}">${esc(row[c] || '')}</td>`;
+      }).join('')}
+    </tr>`;
+  }).join('');
+
   return `
-    <div class="flex items-center justify-between">
-      <input value="${esc(name)}" placeholder="Nombre de la materia (ej: Guitarra Clásica)"
-        oninput="subjects[${id}].name = this.value; saveToStorage()"
-        class="font-semibold text-gray-700 bg-transparent border-b border-gray-200 focus:outline-none focus:border-blue-400 flex-1 mr-3" />
-      <div class="flex items-center gap-3 shrink-0">
-        <label class="flex items-center gap-1.5 cursor-pointer select-none">
-          <input type="checkbox" id="chk-${id}" ${enabled ? 'checked' : ''}
-            onchange="subjects[${id}].enabled = this.checked; saveToStorage(); updateCardStyle(${id})"
-            class="w-4 h-4 accent-green-500 cursor-pointer" />
-          <span id="chklabel-${id}" class="text-xs font-medium ${enabled ? 'text-green-600' : 'text-gray-400'}">
-            ${enabled ? 'Activa' : 'Inactiva'}
-          </span>
-        </label>
-        <button onclick="removeSubject(${id})" class="text-gray-300 hover:text-red-400 text-lg leading-none">✕</button>
-      </div>
-    </div>
-
-    <!-- URL + explore -->
-    <div class="flex gap-2">
-      <input id="url-${id}" type="text" placeholder="URL de Google Sheets..."
-        oninput="subjects[${id}].sheetUrl = this.value; saveToStorage()"
-        class="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-xs" />
-      <button onclick="autoDetect(${id})"
-        class="bg-purple-100 hover:bg-purple-200 text-purple-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap">
-        🤖 Auto-detectar
-      </button>
-      <button onclick="exploreTabs(${id})"
-        class="bg-blue-100 hover:bg-blue-200 text-blue-700 font-semibold px-4 py-2 rounded-xl transition text-xs whitespace-nowrap">
-        Explorar hojas
-      </button>
-    </div>
-    <p id="err-${id}" class="text-red-500 text-xs hidden"></p>
-
-    <!-- Tab + column selectors (shown after exploring) -->
-    <div id="config-${id}" class="hidden space-y-3">
-
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Hoja de contactos (nombres + curso)</label>
-          <select id="ctab-${id}" onchange="onContactTabChange(${id})"
-            class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-xs">
-            <option value="">— selecciona hoja —</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">Hoja de calificaciones (nota final)</label>
-          <select id="gtab-${id}" onchange="onGradeTabChange(${id})"
-            class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400 text-xs">
-            <option value="">— selecciona hoja —</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Contact columns -->
-      <div id="ccols-${id}" class="hidden bg-blue-50 rounded-xl p-3 space-y-2">
-        <p class="text-xs font-semibold text-blue-700">Columnas de la hoja de contactos</p>
-        <div class="grid grid-cols-3 gap-2">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Apellidos</label>
-            <select id="col-ape-${id}" onchange="subjects[${id}].cols.ape = +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">—</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Nombres <span class="text-gray-300">(opcional)</span></label>
-            <select id="col-nom-${id}" onchange="subjects[${id}].cols.nom = this.value === '' ? null : +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">— ninguna —</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Curso / Paralelo</label>
-            <select id="col-curso-${id}" onchange="subjects[${id}].cols.curso = +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">—</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- Grade columns -->
-      <div id="gcols-${id}" class="hidden bg-green-50 rounded-xl p-3 space-y-2">
-        <p class="text-xs font-semibold text-green-700">Columnas de la hoja de calificaciones</p>
-        <div class="grid grid-cols-3 gap-2">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Apellidos</label>
-            <select id="col-gape-${id}" onchange="subjects[${id}].cols.gradeApe = +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">—</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Nombres <span class="text-gray-300">(opcional)</span></label>
-            <select id="col-gnom-${id}" onchange="subjects[${id}].cols.gradeNom = this.value === '' ? null : +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">— ninguna —</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">Nota Final</label>
-            <select id="col-nota-${id}" onchange="subjects[${id}].cols.nota = +this.value; saveToStorage()"
-              class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-              <option value="">—</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <!-- Contenidos de esta materia -->
-      <div>
-        <label class="block text-xs font-medium text-gray-500 mb-1">Contenidos trabajados en el 2do quimestre</label>
-        <textarea id="contenidos-${id}" rows="2" placeholder="Temas cubiertos en esta materia..."
-          oninput="subjects[${id}].contenidos = this.value; saveToStorage()"
-          class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"></textarea>
-      </div>
-
-      <!-- Status -->
-      <div id="status-${id}" class="text-xs text-gray-400"></div>
-    </div>
-  `;
+    <p class="text-xs font-semibold text-gray-500 mb-1">${esc(tt.label || '')} — ${tt.data.length} estudiantes</p>
+    <div class="overflow-x-auto rounded-xl border border-gray-200 mb-2">
+      <table class="w-full text-xs border-collapse">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>${tt.columns.map(c => `<th class="border border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-600 whitespace-nowrap">${esc(c)}</th>`).join('')}</tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
-function removeSubject(id) {
-  delete subjects[id];
-  document.getElementById(`card-${id}`).remove();
-  saveToStorage();
+function toggleSheet(id, checked) {
+  if (checked) enabledIds.add(id);
+  else         enabledIds.delete(id);
+  save();
+  renderSheetList();
+  // Auto-load if not yet loaded
+  if (checked && (!sheetData[id] || sheetData[id].status === 'idle')) {
+    loadSheetData(id);
+  }
 }
 
-// ── Form analysis (AI) ───────────────────────────────────────────────────────
+function deleteSheetGroup(url) {
+  if (!confirm('¿Eliminar esta hoja y todos sus tabs?')) return;
+  const toDelete = savedSheets.filter(s => s.url === url);
+  for (const s of toDelete) {
+    delete sheetData[s.id];
+    enabledIds.delete(s.id);
+  }
+  savedSheets = savedSheets.filter(s => s.url !== url);
+  save();
+  renderSheetList();
+}
 
+// ── Load all & preview ─────────────────────────────────────────────────────────
+async function loadAll() {
+  document.getElementById('loadError').classList.add('hidden');
+  document.getElementById('previewSection').classList.add('hidden');
+
+  const active = savedSheets.filter(s => enabledIds.has(s.id));
+  if (!active.length) { showLoadError('Selecciona al menos una hoja.'); return false; }
+
+  // Load tabs that haven't been loaded yet
+  const pending = active.filter(s => !sheetData[s.id] || sheetData[s.id].status === 'idle');
+  for (const s of pending) await loadSheetData(s.id);
+
+  document.getElementById('loadSpinner').classList.remove('hidden');
+  try {
+    const allGroups = [];
+    for (const sheet of active) {
+      const data = sheetData[sheet.id];
+      if (!data || data.status !== 'ok') continue;
+      const materia = sheet.materia || sheet.tabName;
+      for (const g of data.groups) {
+        allGroups.push({ ...g, materia, tabName: sheet.tabName, sheetId: sheet.id });
+      }
+    }
+
+    if (!allGroups.length) {
+      showLoadError('No se encontraron datos. Verifica que las hojas estén cargadas correctamente.');
+      return false;
+    }
+
+    loadedGroups = allGroups;
+    renderPreviews(allGroups);
+    return true;
+  } catch (e) {
+    showLoadError('Error: ' + e.message);
+    return false;
+  } finally {
+    document.getElementById('loadSpinner').classList.add('hidden');
+  }
+}
+
+// ── Load + Send ────────────────────────────────────────────────────────────────
+async function sendAll() {
+  const ok = await loadAll();
+  if (!ok) return;
+  await submitForms();
+}
+
+// ── Form analysis ──────────────────────────────────────────────────────────────
 const MAPPING_INFO = {
-  auto_curso:        { icon: '🔗', label: 'Auto: Curso y tutor del estudiante',      color: '#dbeafe', text: '#1d4ed8' },
-  auto_materia:      { icon: '🎵', label: 'Auto: Nombre de la materia',              color: '#dbeafe', text: '#1d4ed8' },
-  text_docente:      { icon: '👤', label: 'Nombre del docente (lo escribe el usuario)', color: '#ffedd5', text: '#c2410c' },
-  text_contenidos:   { icon: '📝', label: 'Contenidos por materia (en cada tarjeta)', color: '#dcfce7', text: '#15803d' },
-  auto_dificultades: { icon: '⚠️', label: 'Auto: Estudiantes con dificultades',      color: '#fef9c3', text: '#a16207' },
-  text_acciones:     { icon: '🛠️', label: 'Acciones correctivas (lo escribe el usuario)', color: '#ffedd5', text: '#c2410c' },
-  informe_completo:  { icon: '📄', label: 'Informe completo (contenidos + dificultades + acciones)', color: '#f3e8ff', text: '#7e22ce' },
-  ignore:            { icon: '🚫', label: 'Se omite',                                color: '#f3f4f6', text: '#6b7280' },
+  auto_curso:        { icon: '🔗', label: 'Auto: Curso y tutor',                color: '#dbeafe', text: '#1d4ed8' },
+  auto_materia:      { icon: '🎵', label: 'Auto: Nombre de la materia',         color: '#dbeafe', text: '#1d4ed8' },
+  text_docente:      { icon: '👤', label: 'Nombre del docente',                 color: '#ffedd5', text: '#c2410c' },
+  text_contenidos:   { icon: '📝', label: 'Contenidos por materia',             color: '#dcfce7', text: '#15803d' },
+  auto_dificultades: { icon: '⚠️', label: 'Auto: Estudiantes con dificultades', color: '#fef9c3', text: '#a16207' },
+  text_acciones:     { icon: '🛠️', label: 'Acciones correctivas',               color: '#ffedd5', text: '#c2410c' },
+  informe_completo:  { icon: '📄', label: 'Informe completo',                   color: '#f3e8ff', text: '#7e22ce' },
+  ignore:            { icon: '🚫', label: 'Se omite',                           color: '#f3f4f6', text: '#6b7280' },
 };
 
 async function analyzeForm() {
@@ -203,21 +468,20 @@ async function analyzeForm() {
   const statusEl = document.getElementById('formAnalysisStatus');
   const spinner  = document.getElementById('analyzeSpinner');
   spinner.classList.remove('hidden');
-  statusEl.textContent = '⏳ Analizando campos del formulario...';
+  statusEl.textContent = '⏳ Analizando...';
   document.getElementById('formFieldsSection').classList.add('hidden');
 
   try {
-    const res = await fetch('/api/analyze-form', {
-      method: 'POST',
+    const res = await fetch(API + 'api/analyze-form', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ formUrl: url }),
+      body:    JSON.stringify({ formUrl: url }),
     }).then(r => r.json());
 
     if (!res.success) { statusEl.textContent = '❌ ' + res.error; return; }
-
     formFields = res.fields;
     renderFormFields(res.fields);
-    statusEl.textContent = `✅ ${res.fields.length} campo(s) detectados en el formulario.`;
+    statusEl.textContent = `✅ ${res.fields.length} campo(s) detectados.`;
   } catch (e) {
     statusEl.textContent = '❌ ' + e.message;
   } finally {
@@ -230,11 +494,9 @@ function renderFormFields(fields) {
   section.innerHTML = '';
   section.classList.remove('hidden');
 
-  // Field list
   const box = document.createElement('div');
   box.className = 'bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2';
-  box.innerHTML = '<p class="text-xs font-semibold text-gray-600 mb-2">Campos detectados en el formulario:</p>';
-
+  box.innerHTML = '<p class="text-xs font-semibold text-gray-600 mb-2">Campos del formulario:</p>';
   fields.forEach(f => {
     const info = MAPPING_INFO[f.mapping] || { icon: '❓', label: f.mapping, color: '#f3f4f6', text: '#374151' };
     const row = document.createElement('div');
@@ -242,36 +504,15 @@ function renderFormFields(fields) {
     row.innerHTML = `
       <span class="font-medium text-gray-700 flex-1">${esc(f.label)}</span>
       <span style="background:${info.color};color:${info.text}" class="px-2 py-0.5 rounded-full font-medium text-xs shrink-0">${info.icon} ${info.label}</span>`;
-    if (f.description) {
-      row.title = f.description;
-    }
     box.appendChild(row);
   });
   section.appendChild(box);
 
-  // Render required global inputs
-  const hasMappings = (types) => types.some(t => fields.some(f => f.mapping === t));
-
-  if (hasMappings(['text_docente'])) {
-    section.appendChild(makeField(
-      'docente', 'text',
-      '👤 Docente que llena el formulario',
-      'Ej: Arias Pérez Jorge Eduardo'
-    ));
-  }
-  if (hasMappings(['text_acciones', 'informe_completo'])) {
-    section.appendChild(makeTextarea(
-      'acciones',
-      '🛠️ Acciones con estudiantes con dificultades',
-      'Ej: Reunión con padres, clases de recuperación...'
-    ));
-  }
-  if (hasMappings(['text_contenidos', 'informe_completo'])) {
-    const note = document.createElement('p');
-    note.className = 'text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2';
-    note.textContent = '📝 Los contenidos se escriben en cada tarjeta de materia (ya incluidos abajo).';
-    section.appendChild(note);
-  }
+  const hasMappings = (...types) => types.some(t => fields.some(f => f.mapping === t));
+  if (hasMappings('text_docente'))
+    section.appendChild(makeField('docente', 'text', '👤 Docente', 'Ej: Arias Pérez Jorge Eduardo'));
+  if (hasMappings('text_acciones', 'informe_completo'))
+    section.appendChild(makeTextarea('acciones', '🛠️ Acciones con estudiantes con dificultades', 'Ej: Reunión con padres...'));
 }
 
 function makeField(id, type, label, placeholder) {
@@ -292,279 +533,28 @@ function makeTextarea(id, label, placeholder) {
   return div;
 }
 
-// ── AI auto-detection ─────────────────────────────────────────────────────────
-
-async function autoDetect(id) {
-  const url = document.getElementById(`url-${id}`).value.trim();
-  subjects[id].sheetUrl = url;
-  const errEl = document.getElementById(`err-${id}`);
-  errEl.classList.add('hidden');
-
-  if (!url) { showSubjError(id, 'Ingresa la URL del Sheet.'); return; }
-
-  setStatus(id, '🤖 Analizando estructura con IA...');
-  try {
-    const res = await fetch('/api/analyze-sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheetUrl: url }),
-    }).then(r => r.json());
-
-    if (!res.success) { showSubjError(id, 'Error IA: ' + res.error); return; }
-
-    // Populate tab selectors first
-    const tabsRes = await fetch('/api/get-tabs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheetUrl: url }),
-    }).then(r => r.json());
-
-    if (!tabsRes.success) { showSubjError(id, tabsRes.error); return; }
-
-    subjects[id].tabs = tabsRes.tabs;
-    populateTabSelects(id, tabsRes.tabs);
-    document.getElementById(`config-${id}`).classList.remove('hidden');
-
-    // Set AI-detected tabs
-    document.getElementById(`ctab-${id}`).value = res.contactTab || '';
-    subjects[id].contactTab = res.contactTab || '';
-    document.getElementById(`gtab-${id}`).value = res.gradeTab || '';
-    subjects[id].gradeTab = res.gradeTab || '';
-
-    // Load columns for both tabs in parallel
-    if (res.contactTab) {
-      await loadColumnsInto(id, res.contactTab, ['col-ape', 'col-nom', 'col-curso'], 'contact');
-      document.getElementById(`ccols-${id}`).classList.remove('hidden');
-    }
-    if (res.gradeTab) {
-      await loadColumnsInto(id, res.gradeTab, ['col-gape', 'col-gnom', 'col-nota'], 'grade');
-      document.getElementById(`gcols-${id}`).classList.remove('hidden');
-    }
-
-    // Override auto-select with AI-detected indices
-    const { cols } = res;
-    if (cols) {
-      if (cols.ape != null)      { document.getElementById(`col-ape-${id}`).value  = cols.ape;      subjects[id].cols.ape      = cols.ape; }
-      if (cols.nom != null)      { document.getElementById(`col-nom-${id}`).value  = cols.nom;      subjects[id].cols.nom      = cols.nom; }
-      if (cols.curso != null)    { document.getElementById(`col-curso-${id}`).value = cols.curso;   subjects[id].cols.curso    = cols.curso; }
-      if (cols.gradeApe != null) { document.getElementById(`col-gape-${id}`).value = cols.gradeApe; subjects[id].cols.gradeApe = cols.gradeApe; }
-      if (cols.gradeNom != null) { document.getElementById(`col-gnom-${id}`).value = cols.gradeNom; subjects[id].cols.gradeNom = cols.gradeNom; }
-      if (cols.nota != null)     { document.getElementById(`col-nota-${id}`).value = cols.nota;     subjects[id].cols.nota     = cols.nota; }
-    }
-
-    setStatus(id, `✅ IA detectó: contactos="${res.contactTab}", calificaciones="${res.gradeTab}"`);
-    saveToStorage();
-  } catch (e) {
-    showSubjError(id, e.message);
-  }
-}
-
-// ── Tab exploration ───────────────────────────────────────────────────────────
-
-async function exploreTabs(id) {
-  const url = document.getElementById(`url-${id}`).value.trim();
-  subjects[id].sheetUrl = url;
-  const errEl = document.getElementById(`err-${id}`);
-  errEl.classList.add('hidden');
-
-  if (!url) { showSubjError(id, 'Ingresa la URL del Sheet.'); return; }
-
-  setStatus(id, '⏳ Cargando hojas...');
-  try {
-    const res = await fetch('/api/get-tabs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheetUrl: url }),
-    }).then(r => r.json());
-
-    if (!res.success) { showSubjError(id, res.error); return; }
-
-    subjects[id].tabs = res.tabs;
-    populateTabSelects(id, res.tabs);
-    document.getElementById(`config-${id}`).classList.remove('hidden');
-    setStatus(id, `✅ ${res.tabs.length} hojas encontradas.`);
-  } catch (e) {
-    showSubjError(id, e.message);
-  }
-}
-
-function populateTabSelects(id, tabs) {
-  ['ctab', 'gtab'].forEach(prefix => {
-    const sel = document.getElementById(`${prefix}-${id}`);
-    sel.innerHTML = '<option value="">— selecciona hoja —</option>';
-    tabs.forEach(t => {
-      const opt = document.createElement('option');
-      opt.value = t;
-      opt.textContent = t;
-      sel.appendChild(opt);
-    });
-  });
-
-  // Auto-select likely tabs
-  const contactGuess = tabs.find(t => t.toLowerCase().includes('contacto'));
-  const gradeGuess   = tabs.find(t => t.toLowerCase().includes('anual'));
-  if (contactGuess) {
-    document.getElementById(`ctab-${id}`).value = contactGuess;
-    onContactTabChange(id);
-  }
-  if (gradeGuess) {
-    document.getElementById(`gtab-${id}`).value = gradeGuess;
-    onGradeTabChange(id);
-  }
-}
-
-// ── Column loading ────────────────────────────────────────────────────────────
-
-async function loadColumnsInto(id, tab, selectIds, storeKeys) {
-  const res = await fetch('/api/get-columns', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sheetUrl: subjects[id].sheetUrl, tab }),
-  }).then(r => r.json());
-
-  if (!res.success) { showSubjError(id, res.error); return; }
-
-  selectIds.forEach(selId => {
-    const sel = document.getElementById(`${selId}-${id}`);
-    const hasNone = sel.querySelector('option[value=""]');
-    sel.innerHTML = '';
-    if (hasNone) sel.innerHTML = `<option value="">${hasNone.textContent}</option>`;
-    res.columns.forEach(col => {
-      const opt = document.createElement('option');
-      opt.value = col.idx;
-      opt.textContent = `${col.idx + 1}. ${col.label}`;
-      sel.appendChild(opt);
-    });
-  });
-
-  // Auto-select common column names
-  const autoSelect = (selId, keywords) => {
-    const sel = document.getElementById(`${selId}-${id}`);
-    const match = res.columns.find(c =>
-      keywords.some(kw => c.label.toLowerCase().includes(kw))
-    );
-    if (match) sel.value = match.idx;
-    return match ? match.idx : null;
-  };
-
-  if (storeKeys === 'contact') {
-    const apeIdx  = autoSelect('col-ape',  ['apellido']);
-    const nomIdx  = autoSelect('col-nom',  ['nombre']);
-    const curIdx  = autoSelect('col-curso', ['curso', 'grado', 'paralelo']);
-    subjects[id].cols.ape   = apeIdx;
-    subjects[id].cols.nom   = nomIdx;
-    subjects[id].cols.curso = curIdx;
-  } else {
-    const apeIdx  = autoSelect('col-gape', ['apellido', 'estudiante']);
-    const nomIdx  = autoSelect('col-gnom', ['nombre']);
-    const notaIdx = autoSelect('col-nota', ['nota final', 'nota_final', 'notafinal']);
-    subjects[id].cols.gradeApe = apeIdx;
-    subjects[id].cols.gradeNom = nomIdx;
-    subjects[id].cols.nota     = notaIdx;
-  }
-}
-
-async function onContactTabChange(id) {
-  const tab = document.getElementById(`ctab-${id}`).value;
-  subjects[id].contactTab = tab;
-  if (!tab) return;
-  document.getElementById(`ccols-${id}`).classList.remove('hidden');
-  await loadColumnsInto(id, tab, ['col-ape', 'col-nom', 'col-curso'], 'contact');
-  saveToStorage();
-}
-
-async function onGradeTabChange(id) {
-  const tab = document.getElementById(`gtab-${id}`).value;
-  subjects[id].gradeTab = tab;
-  if (!tab) return;
-  document.getElementById(`gcols-${id}`).classList.remove('hidden');
-  await loadColumnsInto(id, tab, ['col-gape', 'col-gnom', 'col-nota'], 'grade');
-  saveToStorage();
-}
-
-// ── Load all subjects ─────────────────────────────────────────────────────────
-
-async function loadAll() {
-  document.getElementById('loadError').classList.add('hidden');
-
-  // Only process enabled subjects
-  const enabledEntries = Object.entries(subjects).filter(([, s]) => s.enabled !== false);
-  if (!enabledEntries.length) { showLoadError('Activa al menos una materia con el checkbox "Activa".'); return; }
-
-  const incomplete = enabledEntries.filter(([, s]) => !s.sheetUrl || !s.contactTab || !s.gradeTab);
-  const configs    = enabledEntries
-    .filter(([, s]) => s.sheetUrl && s.contactTab && s.gradeTab)
-    .map(([id, s]) => ({
-      name: s.name || `Materia ${id}`,
-      sheetUrl: s.sheetUrl,
-      contactTab: s.contactTab,
-      gradeTab: s.gradeTab,
-      cols: s.cols,
-    }));
-
-  if (!configs.length) {
-    const missing = incomplete.map(([, s]) => {
-      const parts = [];
-      if (!s.sheetUrl)    parts.push('URL de Sheet');
-      if (!s.contactTab)  parts.push('hoja de contactos');
-      if (!s.gradeTab)    parts.push('hoja de calificaciones');
-      return `"${s.name || 'Sin nombre'}": falta ${parts.join(', ')}`;
-    });
-    showLoadError('Falta configurar:\n' + missing.join('\n'));
-    return;
-  }
-
-  if (incomplete.length) {
-    console.warn('[loadAll] Materias incompletas (se omiten):', incomplete.map(([, s]) => s.name));
-  }
-
-  document.getElementById('loadSpinner').classList.remove('hidden');
-  document.getElementById('previewSection').classList.add('hidden');
-
-  try {
-    const res = await fetch('/api/load-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subjects: configs }),
-    }).then(r => r.json());
-
-    if (!res.success) { showLoadError(res.error); return; }
-
-    if (!res.groups || !res.groups.length) {
-      showLoadError('No se encontraron estudiantes. Verifica las columnas seleccionadas.');
-      return;
-    }
-
-    loadedGroups = res.groups;
-    renderPreviews(res.groups);
-  } catch (e) {
-    showLoadError('Error de red: ' + e.message);
-  } finally {
-    document.getElementById('loadSpinner').classList.add('hidden');
-  }
-}
-
-// ── Preview ───────────────────────────────────────────────────────────────────
-
+// ── Preview ────────────────────────────────────────────────────────────────────
 function renderPreviews(groups) {
   const list = document.getElementById('previewList');
   list.innerHTML = '';
-  let hasWarn = false;
 
   groups.forEach((g, idx) => {
-    if (!g.dropdownOption) hasWarn = true;
     const card = document.createElement('div');
     card.className = `bg-white rounded-2xl shadow p-4 border-l-4 ${g.dropdownOption ? 'border-green-400' : 'border-yellow-400'}`;
     card.innerHTML = `
       <div class="flex items-start justify-between">
         <div>
-          <p class="font-semibold text-gray-800">${esc(g.materia)} — <span class="font-bold">${esc(g.curso)}</span></p>
+          <p class="font-semibold text-gray-800">
+            <span class="bg-blue-100 text-blue-700 text-xs font-bold px-2 py-0.5 rounded mr-2">${esc(g.tabName)}</span>
+            ${g.materia ? `<span class="text-gray-500 text-xs mr-1">${esc(g.materia)} —</span>` : ''}
+            <span class="font-bold">${esc(g.curso)}</span>
+          </p>
           ${g.dropdownOption
             ? `<p class="text-green-700 text-xs mt-0.5">✅ ${esc(g.dropdownOption)}</p>`
-            : `<p class="text-yellow-700 text-xs mt-0.5">⚠️ Curso sin coincidencia en el desplegable</p>`}
+            : `<p class="text-yellow-700 text-xs mt-0.5">⚠️ Sin coincidencia en el desplegable</p>`}
           <p class="text-gray-400 text-xs mt-0.5">${g.students.length} estudiante(s) · ${g.dificultades.length} con dificultades</p>
         </div>
-        <button onclick="toggleDetail(${idx})" class="text-blue-500 text-xs hover:underline ml-4">Ver detalle</button>
+        <button onclick="toggleDetail(${idx})" class="text-blue-500 text-xs hover:underline ml-4 shrink-0">Ver detalle</button>
       </div>
       <div id="detail-${idx}" class="hidden mt-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-1 mb-3">
@@ -589,9 +579,9 @@ function toggleDetail(idx) {
   el.classList.toggle('hidden');
   if (!el.classList.contains('hidden')) {
     const g = loadedGroups[idx];
-    const subj = Object.values(subjects).find(s => s.name === g.materia);
-    const contenidos = subj?.contenidos || '(sin contenidos)';
-    document.getElementById(`ft-${idx}`).textContent = buildFormText(contenidos, g.dificultades, document.getElementById('acciones')?.value.trim() || '');
+    const contenidos = sheetData[g.sheetId]?.contenidos || '(sin contenidos)';
+    document.getElementById(`ft-${idx}`).textContent =
+      buildFormText(contenidos, g.dificultades, document.getElementById('acciones')?.value.trim() || '');
   }
 }
 
@@ -608,45 +598,41 @@ function buildFormText(contenidos, dificultades, acciones) {
   ].join('\n');
 }
 
-// ── Submit ────────────────────────────────────────────────────────────────────
-
+// ── Submit ─────────────────────────────────────────────────────────────────────
 async function submitForms() {
-  const docente  = document.getElementById('docente')?.value.trim() || '';
+  const docente  = document.getElementById('docente')?.value.trim()  || '';
   const acciones = document.getElementById('acciones')?.value.trim() || '';
   const formUrl  = document.getElementById('formUrl').value.trim();
 
-  // Validate required fields based on form analysis
   const needsDocente = formFields.length === 0 || formFields.some(f => f.mapping === 'text_docente');
   if (needsDocente && !docente) { alert('Ingresa el nombre del docente.'); return; }
-
   if (!formUrl) { alert('Ingresa y analiza la URL del formulario primero.'); return; }
 
-  const toSend = loadedGroups.filter(g => g.dropdownOption);
+  const toSend  = loadedGroups.filter(g => g.dropdownOption);
   const skipped = loadedGroups.length - toSend.length;
-  if (!toSend.length) { alert('No hay cursos con coincidencia en el formulario para enviar.'); return; }
-  if (!confirm(`Enviar ${toSend.length} formulario(s)?${skipped ? `\n(${skipped} omitido(s) sin coincidencia)` : ''}`)) return;
+  if (!toSend.length) { alert('No hay cursos con coincidencia en el formulario.'); return; }
+  if (!confirm(`Enviar ${toSend.length} formulario(s)?${skipped ? `\n(${skipped} omitido(s))` : ''}`)) return;
 
   document.getElementById('sendSpinner').classList.remove('hidden');
 
   const submissions = toSend.map(g => {
-    const subj = Object.values(subjects).find(s => s.name === g.materia);
-    const contenidos = subj?.contenidos || '';
+    const contenidos = sheetData[g.sheetId]?.contenidos || '';
     return {
       dropdownOption: g.dropdownOption,
       docente,
-      materia: g.materia,
+      materia:    g.materia,
       contenidos,
       acciones,
       dificultades: g.dificultades,
-      formText: buildFormText(contenidos, g.dificultades, acciones),
+      formText:   buildFormText(contenidos, g.dificultades, acciones),
     };
   });
 
   try {
-    const res = await fetch('/api/submit-forms', {
-      method: 'POST',
+    const res = await fetch(API + 'api/submit-forms', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submissions, formUrl, formFields }),
+      body:    JSON.stringify({ submissions, formUrl, formFields }),
     }).then(r => r.json());
     renderResults(res.results, skipped);
   } catch (e) {
@@ -658,7 +644,7 @@ async function submitForms() {
 
 function renderResults(results, skipped) {
   const section = document.getElementById('resultsSection');
-  const list = document.getElementById('resultsList');
+  const list    = document.getElementById('resultsList');
   list.innerHTML = '';
   results.forEach(r => {
     const el = document.createElement('div');
@@ -676,143 +662,63 @@ function renderResults(results, skipped) {
   section.scrollIntoView({ behavior: 'smooth' });
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function showSubjError(id, msg) {
-  const el = document.getElementById(`err-${id}`);
-  el.textContent = msg; el.classList.remove('hidden');
-  setStatus(id, '');
-}
-
+// ── Helpers ────────────────────────────────────────────────────────────────────
 function showLoadError(msg) {
   const el = document.getElementById('loadError');
   el.textContent = '⚠️ ' + msg;
   el.classList.remove('hidden');
-  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function showDebug(msg) {
-  let el = document.getElementById('debugPanel');
-  if (!el) {
-    el = document.createElement('pre');
-    el.id = 'debugPanel';
-    el.style.cssText = 'background:#1e1e2e;color:#cdd6f4;padding:12px;border-radius:10px;font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:8px;max-height:300px;overflow:auto';
-    document.getElementById('loadError').insertAdjacentElement('afterend', el);
-  }
-  el.textContent = msg;
-  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function setStatus(id, msg) {
-  const el = document.getElementById(`status-${id}`);
-  if (el) el.textContent = msg;
 }
 
 function esc(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ── Persistencia localStorage ─────────────────────────────────────────────────
-
-function saveToStorage() {
+// ── Persistence ────────────────────────────────────────────────────────────────
+function save() {
   try {
-    const data = {};
-    for (const [id, s] of Object.entries(subjects)) {
-      data[id] = {
-        name:       s.name,
-        sheetUrl:   s.sheetUrl,
-        contactTab: s.contactTab,
-        gradeTab:   s.gradeTab,
-        cols:       s.cols,
-        contenidos: s.contenidos || '',
-        enabled:    s.enabled !== false,
-      };
+    localStorage.setItem('sheets_v3', JSON.stringify(savedSheets));
+    localStorage.setItem('enabled_v3', JSON.stringify([...enabledIds]));
+    // Persist contenidos only
+    const meta = {};
+    for (const [id, d] of Object.entries(sheetData)) {
+      meta[id] = { contenidos: d.contenidos || '' };
     }
-    localStorage.setItem('informes_subjects', JSON.stringify(data));
-    localStorage.setItem('informes_counter',  String(subjectCounter));
+    localStorage.setItem('sheetmeta_v3', JSON.stringify(meta));
     const fu = document.getElementById('formUrl')?.value;
-    if (fu) localStorage.setItem('informes_formUrl', fu);
-  } catch (e) { console.warn('save failed', e); }
+    if (fu) localStorage.setItem('formUrl_v3', fu);
+  } catch(e) {}
 }
 
 async function loadFromStorage() {
   try {
-    const saved = localStorage.getItem('informes_subjects');
-    if (!saved) return false;
-    const data = JSON.parse(saved);
-    if (!Object.keys(data).length) return false;
+    const raw = localStorage.getItem('sheets_v3');
+    if (!raw) return;
+    savedSheets = JSON.parse(raw);
+    enabledIds  = new Set(JSON.parse(localStorage.getItem('enabled_v3') || '[]'));
+    const meta  = JSON.parse(localStorage.getItem('sheetmeta_v3') || '{}');
 
-    subjectCounter = parseInt(localStorage.getItem('informes_counter') || '0');
-
-    for (const [id, s] of Object.entries(data)) {
-      const numId = parseInt(id);
-      const cardId = addSubject(s.name || '', s);
-
-      // Restore URL input text
-      const urlEl = document.getElementById(`url-${cardId}`);
-      if (urlEl && s.sheetUrl) urlEl.value = s.sheetUrl;
-
-      // Restore contenidos
-      const contEl = document.getElementById(`contenidos-${cardId}`);
-      if (contEl && s.contenidos) contEl.value = s.contenidos;
-
-      // Restore tab config panel if tabs were selected
-      if (s.contactTab || s.gradeTab) {
-        document.getElementById(`config-${cardId}`).classList.remove('hidden');
-
-        // Add saved tab as option so selector shows it
-        for (const [prefix, tabVal] of [['ctab', s.contactTab], ['gtab', s.gradeTab]]) {
-          if (!tabVal) continue;
-          const sel = document.getElementById(`${prefix}-${cardId}`);
-          if (!sel) continue;
-          sel.innerHTML = `<option value="${esc(tabVal)}" selected>${esc(tabVal)}</option>`;
-        }
-
-        // Restore column sections
-        if (s.contactTab && s.cols) {
-          document.getElementById(`ccols-${cardId}`).classList.remove('hidden');
-          restoreColSelect(`col-ape-${cardId}`,   s.cols.ape);
-          restoreColSelect(`col-nom-${cardId}`,   s.cols.nom);
-          restoreColSelect(`col-curso-${cardId}`, s.cols.curso);
-        }
-        if (s.gradeTab && s.cols) {
-          document.getElementById(`gcols-${cardId}`).classList.remove('hidden');
-          restoreColSelect(`col-gape-${cardId}`, s.cols.gradeApe);
-          restoreColSelect(`col-gnom-${cardId}`, s.cols.gradeNom);
-          restoreColSelect(`col-nota-${cardId}`, s.cols.nota);
-        }
-
-        setStatus(cardId, '📂 Configuración restaurada. Usa Auto-detectar para refrescar columnas.');
-      }
+    for (const sheet of savedSheets) {
+      sheetData[sheet.id] = {
+        status:     'idle',
+        groups:     [],
+        contenidos: meta[sheet.id]?.contenidos || '',
+      };
     }
 
-    // Restore formUrl
-    const fu = localStorage.getItem('informes_formUrl');
-    if (fu) {
-      const fuEl = document.getElementById('formUrl');
-      if (fuEl) fuEl.value = fu;
+    const fu = localStorage.getItem('formUrl_v3');
+    if (fu) { const el = document.getElementById('formUrl'); if (el) el.value = fu; }
+
+    renderSheetList();
+
+    // Reload ALL sheets in background (not just enabled)
+    for (const sheet of savedSheets) {
+      loadSheetData(sheet.id); // fire and forget
     }
-
-    return true;
-  } catch (e) {
-    console.warn('restore failed', e);
-    return false;
-  }
+  } catch(e) {}
 }
 
-function restoreColSelect(selId, val) {
-  const sel = document.getElementById(selId);
-  if (!sel || val == null) return;
-  const label = sel.querySelector('option[value=""]')?.textContent || '—';
-  sel.innerHTML = `<option value="">${label}</option><option value="${val}" selected>Col. ${parseInt(val) + 1} (guardado)</option>`;
-}
+document.getElementById('formUrl').addEventListener('input', save);
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-
+// ── Init ───────────────────────────────────────────────────────────────────────
 checkAuth();
-loadFromStorage().then(restored => {
-  if (!restored) INITIAL_SUBJECTS.forEach(name => addSubject(name));
-});
-
-// Save formUrl when user types it
-document.getElementById('formUrl').addEventListener('input', saveToStorage);
+loadFromStorage();

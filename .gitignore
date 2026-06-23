@@ -4,3 +4,8 @@ token.json
 credentials.json
 /tmp/
 *.log
+
+# Datos de estudiantes (sensibles — no versionar)
+Datos/*.csv
+Datos/*.xlsx
+Datos/*.xls

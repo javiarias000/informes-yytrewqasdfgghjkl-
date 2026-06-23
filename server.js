@@ -8,7 +8,11 @@ const OpenAI = require('openai');
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag:         false,
+  lastModified: false,
+  setHeaders:   (res) => { res.setHeader('Cache-Control', 'no-store'); },
+}));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -145,8 +149,9 @@ function findDropdownOption(cursoFromSheet) {
 // ── Sheets helpers ────────────────────────────────────────────────────────────
 
 function extractSheetId(urlOrId) {
-  const match = urlOrId.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return match ? match[1] : urlOrId.trim();
+  const clean = (urlOrId || '').replace(/[?#].*$/, '').trim();
+  const match = clean.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : clean;
 }
 
 async function getTabNames(sheets, id) {
@@ -711,4 +716,270 @@ Responde ÚNICAMENTE con un JSON válido en este formato exacto (sin texto adici
   }
 });
 
-app.listen(8000, () => console.log('Servidor en http://localhost:8000'));
+// ── Smart load: match sheet tabs against column_map.json ─────────────────────
+
+app.post('/api/smart-load', async (req, res) => {
+  try {
+    const { sheetUrl, subjectName, gradeTab: gradeTabOverride } = req.body;
+    const map = loadColMap();
+    const knownSheets = map.sheets || {};
+
+    const sheetsApi = google.sheets({ version: 'v4', auth: oauth2Client });
+    const id = extractSheetId(sheetUrl);
+    const tabs = await getTabNames(sheetsApi, id);
+
+    // Match each tab to a known sheet ID (exact then fuzzy)
+    const matched = {};
+    for (const tab of tabs) {
+      const t = tab.trim();
+      if (knownSheets[t]) { matched[t] = knownSheets[t]; continue; }
+      for (const [sheetId, cfg] of Object.entries(knownSheets)) {
+        if (t.toLowerCase().includes(sheetId.toLowerCase())) {
+          matched[t] = cfg; break;
+        }
+      }
+    }
+
+    const matchCount = Object.keys(matched).length;
+    if (matchCount === 0) {
+      return res.json({ success: false, recognized: false, error: 'Formato no reconocido' });
+    }
+
+    // Find the contact and grade tabs
+    const findTab = (keywords) =>
+      Object.entries(matched).find(([tab]) =>
+        keywords.some(kw => tab.toLowerCase().includes(kw.toLowerCase()))
+      );
+
+    const contactEntry = findTab(['contacto']);
+
+    // If caller specified a tab, use it; otherwise auto-detect best grade tab
+    const gradeEntry = gradeTabOverride
+      ? Object.entries(matched).find(([tab]) =>
+          tab === gradeTabOverride ||
+          tab.toLowerCase() === gradeTabOverride.toLowerCase()
+        ) || findTab(['anual', '2Q', '1Q'])
+      : findTab(['anual', '2Q', '1Q']);
+
+    if (!contactEntry) {
+      return res.json({
+        success: true,
+        recognized: true,
+        format:      map.institution || 'Formato conocido',
+        matchedTabs: Object.keys(matched),
+        gradeTabs:   Object.keys(matched).filter(t => !t.toLowerCase().includes('contacto')),
+        contactTab:  null,
+        groups:      [],
+        warning:     'Se reconoció el formato pero falta la hoja Contacto',
+      });
+    }
+
+    if (!gradeEntry) {
+      return res.json({
+        success:     true,
+        recognized:  true,
+        format:      map.institution || 'Formato conocido',
+        matchedTabs: Object.keys(matched),
+        gradeTabs:   Object.keys(matched).filter(t => !t.toLowerCase().includes('contacto')),
+        contactTab:  contactEntry[0],
+        groups:      [],
+        warning:     'No se encontró una hoja de calificaciones válida',
+      });
+    }
+
+    const [contactTab, contactCfg] = contactEntry;
+    const [gradeTab,   gradeCfg]   = gradeEntry;
+
+    // Extract column indices by name from the map
+    const colIdx = (cfg, ...names) => {
+      for (const name of names) {
+        const col = cfg.columns.find(c =>
+          c.name.toLowerCase().includes(name.toLowerCase())
+        );
+        if (col) return col.index;
+      }
+      return null;
+    };
+
+    const cols = {
+      ape:      colIdx(contactCfg, 'Apellidos'),
+      nom:      colIdx(contactCfg, 'Nombres'),
+      curso:    colIdx(contactCfg, 'Curso'),
+      gradeApe: colIdx(gradeCfg, 'Apellidos'),
+      gradeNom: colIdx(gradeCfg, 'Nombres'),
+      // 1P/2P/3P/4P use "Promedio parcial"; 1Q/2Q use "Nota final …"; Anual uses "NOTA FINAL"
+      nota:     colIdx(gradeCfg, 'NOTA FINAL', 'Nota Final', 'nota final', 'Promedio parcial', 'Promedio'),
+    };
+
+    const data = await readStudentSheetConfigured(sheetsApi, id, { contactTab, gradeTab, cols });
+
+    const byCurso = {};
+    for (const [nombre, d] of Object.entries(data)) {
+      const key = d.curso || 'Sin curso';
+      if (!byCurso[key]) byCurso[key] = [];
+      byCurso[key].push({ nombre, promedio: d.promedio });
+    }
+
+    const groups = Object.entries(byCurso).map(([curso, students]) => ({
+      materia:        subjectName || 'Materia',
+      curso,
+      dropdownOption: findDropdownOption(curso),
+      students,
+      dificultades:   students.filter(s => s.promedio < 7),
+    }));
+
+    console.log(`[smart-load] ${map.institution} | ${matchCount} tabs | ${groups.length} grupos`);
+
+    res.json({
+      success:     true,
+      recognized:  true,
+      format:      map.institution || 'Formato conocido',
+      matchedTabs: Object.keys(matched),
+      gradeTabs:   Object.keys(matched).filter(t => !t.toLowerCase().includes('contacto')),
+      contactTab,
+      gradeTab,
+      cols,
+      groups,
+    });
+  } catch (err) {
+    console.error('[smart-load]', err.message);
+    res.json({ success: false, recognized: false, error: err.message });
+  }
+});
+
+// ── API: full student table for one tab ──────────────────────────────────────
+
+app.post('/api/tab-table', async (req, res) => {
+  try {
+    const { sheetUrl, tabName } = req.body;
+    const map = loadColMap();
+    const cfg = map.sheets[tabName];
+    if (!cfg) return res.json({ success: false, error: `Tab "${tabName}" no mapeado` });
+
+    const sheetsApi = google.sheets({ version: 'v4', auth: oauth2Client });
+    const rows = await readTab(sheetsApi, extractSheetId(sheetUrl), tabName);
+
+    const headerRowIdx = cfg.headerRow;
+    const dataStart    = cfg.dataStartRow;
+    const skipSet      = new Set(cfg.skipRows || []);
+
+    // Columns to show: all except "No"
+    const displayCols = cfg.columns.filter(c => c.name !== 'No');
+    const colNames    = displayCols.map(c => c.name);
+
+    const data = [];
+    for (let i = dataStart; i < rows.length; i++) {
+      if (skipSet.has(i)) continue;
+      const row = rows[i];
+      const apellidos = (row[cfg.columns.find(c => c.name === 'Apellidos')?.index] || '').trim();
+      if (!apellidos) continue;
+      const entry = {};
+      for (const col of displayCols) {
+        entry[col.name] = (row[col.index] || '').trim();
+      }
+      data.push(entry);
+    }
+
+    res.json({ success: true, label: cfg.label, columns: colNames, data });
+  } catch (err) {
+    console.error('[tab-table]', err.message);
+    res.json({ success: false, error: err.message });
+  }
+});
+
+// ── CSV column mapping ────────────────────────────────────────────────────────
+
+const DATOS_DIR = path.join(__dirname, 'Datos');
+const COL_MAP_PATH = path.join(DATOS_DIR, 'column_map.json');
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], cell = '', inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuote && text[i + 1] === '"') { cell += '"'; i++; }
+      else inQuote = !inQuote;
+    } else if (ch === ',' && !inQuote) {
+      row.push(cell); cell = '';
+    } else if ((ch === '\n' || ch === '\r') && !inQuote) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function loadColMap() {
+  if (!fs.existsSync(COL_MAP_PATH)) return { sheets: {} };
+  return JSON.parse(fs.readFileSync(COL_MAP_PATH, 'utf8'));
+}
+
+// GET /api/cal/sheets — lista hojas mapeadas y pendientes
+app.get('/api/cal/sheets', (req, res) => {
+  const map = loadColMap();
+  const files = fs.readdirSync(DATOS_DIR)
+    .filter(f => f.endsWith('.csv'))
+    .map(f => f.replace('.csv', ''));
+
+  const sheets = files.map(id => {
+    const cfg = map.sheets?.[id];
+    return { id, label: cfg?.label || id, mapped: !!cfg, columns: cfg?.columns || [] };
+  });
+
+  res.json({ institution: map.institution || '', sheets });
+});
+
+// GET /api/cal/raw/:sheet — encabezados sin procesar (línea real del CSV)
+app.get('/api/cal/raw/:sheet', (req, res) => {
+  const file = path.join(DATOS_DIR, `${req.params.sheet}.csv`);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'No encontrado' });
+
+  const rows = parseCSV(fs.readFileSync(file, 'utf8'));
+  const preview = rows.slice(0, 20).map((r, i) => ({ line: i + 1, cells: r }));
+  res.json({ preview });
+});
+
+// GET /api/cal/data/:sheet — datos según el mapa de columnas
+app.get('/api/cal/data/:sheet', (req, res) => {
+  const map = loadColMap();
+  const cfg = map.sheets?.[req.params.sheet];
+  if (!cfg) return res.status(404).json({ error: 'Hoja no mapeada aún' });
+
+  const file = path.join(DATOS_DIR, `${req.params.sheet}.csv`);
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'CSV no encontrado' });
+
+  const rows = parseCSV(fs.readFileSync(file, 'utf8'));
+  const skip = new Set(cfg.skipRows || []);
+  const data = [];
+
+  for (let i = cfg.dataStartRow; i < rows.length; i++) {
+    if (skip.has(i)) continue;
+    const row = rows[i];
+    if (row.every(c => !c.trim())) continue;
+    const record = {};
+    for (const col of cfg.columns) {
+      record[col.name] = (row[col.index] || '').trim();
+    }
+    data.push(record);
+  }
+
+  res.json({ label: cfg.label, columns: cfg.columns.map(c => c.name), data });
+});
+
+// POST /api/cal/map — guarda o actualiza el mapeo de una hoja
+app.post('/api/cal/map', (req, res) => {
+  const { sheetId, label, headerRow, skipRows, dataStartRow, columns } = req.body;
+  if (!sheetId) return res.status(400).json({ error: 'sheetId requerido' });
+
+  const map = loadColMap();
+  map.sheets = map.sheets || {};
+  map.sheets[sheetId] = { label, headerRow, skipRows, dataStartRow, columns };
+  fs.writeFileSync(COL_MAP_PATH, JSON.stringify(map, null, 2));
+  res.json({ success: true });
+});
+
+app.listen(3001, () => console.log('Servidor en http://localhost:3001'));
