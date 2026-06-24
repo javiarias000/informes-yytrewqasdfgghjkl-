@@ -1470,6 +1470,7 @@ document.getElementById('formUrl').addEventListener('input', save);
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
 function showSection(name) {
+  _currentSection = name;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   const view = document.getElementById('view-' + name);
@@ -1480,6 +1481,7 @@ function showSection(name) {
   if (name === 'padres')     initPadresView();
   if (name === 'ingreso')    initIngresoView();
   if (name === 'actividades') initActividadesView();
+  _saveNav();
 }
 
 // ── ACTIVIDADES DE CLASE — CRUD completo ──────────────────────────────────────
@@ -2481,6 +2483,68 @@ async function sendParentReports() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ── Persistencia de navegación ────────────────────────────────────────────────
+let _currentSection  = 'ingreso';
+let _restoringNav    = false;
+const NAV_KEY        = 'navState_v2';
+
+function _saveNav() {
+  if (_restoringNav) return;
+  try {
+    localStorage.setItem(NAV_KEY, JSON.stringify({
+      section:    _currentSection,
+      tipo:       _ingresoWizardType,
+      url:        _ingresoCurrentUrl,
+      tab:        document.getElementById('ingresoTabSelect')?.value || '',
+      curso:      _ingresoCurrentCurso,
+      colIdx:     _ingresoCurrentColIdx,
+      colName:    _ingresoCurrentColName,
+    }));
+  } catch(_) {}
+}
+
+function _clearNav() {
+  try { localStorage.removeItem(NAV_KEY); } catch(_) {}
+}
+
+async function _restoreNav() {
+  let st;
+  try {
+    const raw = localStorage.getItem(NAV_KEY);
+    if (!raw) return;
+    st = JSON.parse(raw);
+  } catch(_) { return; }
+
+  if (!st?.section) return;
+  _restoringNav = true;
+  try {
+    showSection(st.section);
+    if (st.section !== 'ingreso') return;
+    if (!st.tipo) return;
+
+    ingresoSelectTipo(st.tipo);
+    if (!st.url) return;
+
+    ingresoSelectHoja(st.url);
+    if (!st.tab) return;
+
+    await ingresoSelectEtapa(st.tab);   // carga datos y muestra cursos
+
+    if (st.curso !== undefined && st.curso !== null) {
+      ingresoSelectCurso(st.curso);     // muestra actividades (async, no esperamos)
+
+      // Esperar a que _showIngresoActividadesView rellene la lista
+      await new Promise(r => setTimeout(r, 600));
+
+      if (st.colIdx != null) {
+        ingresoSelectActividad(st.colIdx, st.colName, st.colName);
+      }
+    }
+  } finally {
+    _restoringNav = false;
+  }
+}
+
 // INGRESO DE CALIFICACIONES / ASISTENCIAS
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -2508,13 +2572,18 @@ function initIngresoView() {
   _ingresoWizardType = null;
   _ingresoSheetId    = null;
   _ingresoCurrentUrl = null;
+  _ingresoCurrentCurso = null;
+  _ingresoCurrentColIdx = null;
+  _ingresoCurrentColName = '';
   _ingresoShowStep(0);
   const banner = document.getElementById('ingresoReauthBanner');
   if (banner) banner.classList.toggle('hidden', _canWrite);
+  if (!_restoringNav) _clearNav();
 }
 
 function ingresoSelectTipo(tipo) {
   _ingresoWizardType = tipo;
+  _saveNav();
   document.getElementById('ingreso-c0').textContent = tipo === 'calificaciones' ? '📊 Calificaciones' : '📋 Asistencias';
   ['ingreso-c1','ingreso-c1-arr','ingreso-c2'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
 
@@ -2542,6 +2611,7 @@ function ingresoSelectTipo(tipo) {
 function ingresoSelectHoja(url) {
   _ingresoCurrentUrl = url;
   _ingresoSheetId    = extractSheetIdFromUrl(url);
+  _saveNav();
   const sheet = savedSheets.find(s => s.url === url);
 
   const c1 = document.getElementById('ingreso-c1');
@@ -2567,6 +2637,7 @@ function ingresoSelectHoja(url) {
 async function ingresoSelectEtapa(tab) {
   const hiddenTab = document.getElementById('ingresoTabSelect');
   if (hiddenTab) hiddenTab.value = tab;
+  _saveNav();
   const c2 = document.getElementById('ingreso-c2');
   c2.textContent = ETAPA_LABEL[tab] || tab;
   c2.classList.remove('hidden');
@@ -2815,6 +2886,7 @@ async function ingresoDeleteActividad(colIdx, ev) {
 function ingresoSelectActividad(colIdx, colName, actLabel) {
   _ingresoCurrentColIdx  = colIdx;
   _ingresoCurrentColName = colName;
+  _saveNav();
   // Actualizar breadcrumb c4 (actividad, verde)
   const c4 = document.getElementById('ingreso-c4');
   const c4arr = document.getElementById('ingreso-c4-arr');
@@ -2921,6 +2993,7 @@ function _showIngresoCursosView(data) {
 
 function ingresoSelectCurso(curso) {
   _ingresoCurrentCurso = curso;
+  _saveNav();
   // Breadcrumb c3 (curso, morado)
   const c3 = document.getElementById('ingreso-c3');
   const c3arr = document.getElementById('ingreso-c3-arr');
@@ -2939,6 +3012,7 @@ function ingresoVolverCursos() {
 
 // ── Sub-vista B: lista de estudiantes ────────────────────────────────────────
 function _showIngresoStudentsView(data, curso) {
+  document.getElementById('ingreso-p3-actividades').classList.add('hidden');
   document.getElementById('ingreso-p3-cursos').classList.add('hidden');
   document.getElementById('ingreso-p3-students').classList.remove('hidden');
 
@@ -3766,3 +3840,8 @@ checkAuth();
 loadFromStorage();
 initWa();
 loadHistory();
+
+// Restaurar posición después de recargar la página
+document.addEventListener('DOMContentLoaded', () => {
+  _restoreNav().catch(() => {});
+});
