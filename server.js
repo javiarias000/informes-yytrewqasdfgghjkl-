@@ -1768,13 +1768,44 @@ app.get('/api/tab-data', async (req, res) => {
         });
       }
 
-      const courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
-      console.log(`[tab-data] tab=${tab} students=${students.length} courses=${JSON.stringify(courses)}`);
-      // Debug: first 3 raw rows after dataStartRow to help diagnose detection issues
-      for (let di = tabCfg.dataStartRow; di < Math.min(tabCfg.dataStartRow+3, rows.length); di++) {
-        const dr = rows[di];
-        console.log(`  row[${di}] r[0]=${JSON.stringify(String(dr[0]||'').trim())} r[1]=${JSON.stringify(String(dr[1]||'').trim())} r[2]=${JSON.stringify(String(dr[2]||'').trim())}`);
+      let courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+
+      // Si no se detectaron cursos desde cabeceras, cruzar con la pestaña Contacto
+      if (!courses.length) {
+        try {
+          const contactoTabName = allTabs.find(t =>
+            t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('contacto')
+          );
+          if (contactoTabName) {
+            const cRows = await readTab(sheets, sheetId, contactoTabName);
+            if (cRows.length >= 2) {
+              const h = cRows[0].map(c => (c||'').toLowerCase().trim());
+              const cApe   = h.findIndex(c => c.includes('apellido'));
+              const cNom   = h.findIndex(c => c==='nombres'||(c.includes('nombre')&&!c.includes('apellido')));
+              const cCurso = h.findIndex(c => c.includes('curso')||c.includes('grado')||c.includes('paralelo'));
+              const m = {};
+              for (let ci = 1; ci < cRows.length; ci++) {
+                const cr  = cRows[ci];
+                const ape = (cr[cApe]  || '').trim();
+                const nom = (cr[cNom]  || '').trim();
+                const cur = cCurso >= 0 ? (cr[cCurso] || '').trim() : '';
+                const full = [ape, nom].filter(Boolean).join(' ');
+                if (full && cur) m[normName(full)] = cur;
+              }
+              for (const s of students) {
+                const found = m[normName(s.nombre)];
+                if (found) s.curso = found;
+              }
+              courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+              console.log(`[tab-data] Contacto lookup: ${courses.length} cursos`);
+            }
+          }
+        } catch(e) {
+          console.log('[tab-data] Contacto lookup failed:', e.message);
+        }
       }
+
+      console.log(`[tab-data] tab=${tab} students=${students.length} courses=${JSON.stringify(courses)}`);
 
       return res.json({
         success: true, tab, label: tabCfg.label || labelMap[tab] || tab,
@@ -1822,7 +1853,40 @@ app.get('/api/tab-data', async (req, res) => {
       students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), curso: attCurso || null, values });
     }
 
-    const courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+    let courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+
+    if (!courses.length) {
+      try {
+        const contactoTabName = allTabs.find(t =>
+          t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('contacto')
+        );
+        if (contactoTabName) {
+          const cRows = await readTab(sheets, sheetId, contactoTabName);
+          if (cRows.length >= 2) {
+            const h = cRows[0].map(c => (c||'').toLowerCase().trim());
+            const cApe   = h.findIndex(c => c.includes('apellido'));
+            const cNom   = h.findIndex(c => c==='nombres'||(c.includes('nombre')&&!c.includes('apellido')));
+            const cCurso = h.findIndex(c => c.includes('curso')||c.includes('grado')||c.includes('paralelo'));
+            const m = {};
+            for (let ci = 1; ci < cRows.length; ci++) {
+              const cr  = cRows[ci];
+              const ape = (cr[cApe]  || '').trim();
+              const nom = (cr[cNom]  || '').trim();
+              const cur = cCurso >= 0 ? (cr[cCurso] || '').trim() : '';
+              const full = [ape, nom].filter(Boolean).join(' ');
+              if (full && cur) m[normName(full)] = cur;
+            }
+            for (const s of students) {
+              const found = m[normName(s.nombre)];
+              if (found) s.curso = found;
+            }
+            courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+          }
+        }
+      } catch(e) {
+        console.log('[tab-data att] Contacto lookup failed:', e.message);
+      }
+    }
 
     return res.json({
       success: true, tab, label: labelMap[tab] || tab,
