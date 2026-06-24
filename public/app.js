@@ -2394,6 +2394,35 @@ function _showIngresoStudentsView(data, curso) {
   _renderStudentCards(data, curso);
 }
 
+// Genera el HTML de una tarjeta de estudiante
+function _studentCardHtml(s, data, isAtt) {
+  const origIdx = data.students.indexOf(s);
+  let badge = '';
+  if (!isAtt && data.editableCols.length) {
+    const vals  = data.editableCols.map(c => parseFloat(s.values[c.index]) || 0).filter(v => v > 0);
+    if (vals.length) {
+      const avg   = (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
+      const color = parseFloat(avg) >= 7 ? 'text-green-600' : 'text-red-500';
+      badge = `<span class="ml-auto text-xs font-bold ${color}">${avg}</span>`;
+    } else {
+      badge = `<span class="ml-auto text-xs text-gray-300">—</span>`;
+    }
+  } else if (isAtt) {
+    const dc = data.editableCols.filter(c => c.isDate);
+    const p  = dc.reduce((n,c) => n + (String(s.values[c.index]).toUpperCase()==='A'?1:0), 0);
+    if (dc.length) badge = `<span class="ml-auto text-xs text-gray-400">${p}/${dc.length}</span>`;
+  }
+  return `
+  <button onclick="ingresoSeleccionarEstudiante(${origIdx})"
+    class="flex items-center gap-3 p-3.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left w-full">
+    <span class="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold flex items-center justify-center flex-shrink-0">
+      ${(s.nombre.trim()[0]||'?').toUpperCase()}
+    </span>
+    <span class="flex-1 font-medium text-gray-800 text-sm leading-tight">${s.nombre}</span>
+    ${badge}
+  </button>`;
+}
+
 function _renderStudentCards(data, curso) {
   const list  = document.getElementById('ingreso-student-list');
   const empty = document.getElementById('ingreso-student-empty');
@@ -2415,34 +2444,38 @@ function _renderStudentCards(data, curso) {
   }
   empty.classList.add('hidden');
 
-  list.innerHTML = filtered.map(s => {
-    const origIdx = data.students.indexOf(s);
-    let badge = '';
-    if (!isAtt && data.editableCols.length) {
-      const vals   = data.editableCols.map(c => parseFloat(s.values[c.index]) || 0).filter(v => v > 0);
-      const filled = vals.length;
-      const total  = data.editableCols.length;
-      if (filled) {
-        const avg = (vals.reduce((a,b)=>a+b,0)/filled).toFixed(2);
-        const color = parseFloat(avg) >= 7 ? 'text-green-600' : 'text-red-500';
-        badge = `<span class="ml-auto text-xs font-bold ${color}">${avg}</span><span class="text-xs text-gray-300 ml-1">(${filled}/${total})</span>`;
-      } else {
-        badge = `<span class="ml-auto text-xs text-gray-300">Sin notas</span>`;
-      }
-    } else if (isAtt) {
-      const dateCols = data.editableCols.filter(c => c.isDate);
-      const present  = dateCols.reduce((n,c) => n + (String(s.values[c.index]).toUpperCase()==='A'?1:0), 0);
-      if (dateCols.length) badge = `<span class="ml-auto text-xs text-gray-400">${present}/${dateCols.length} A</span>`;
-    }
+  // Curso específico → lista plana
+  if (curso !== null) {
+    list.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
+    list.innerHTML = filtered.map(s => _studentCardHtml(s, data, isAtt)).join('');
+    return;
+  }
+
+  // Todos los cursos → agrupar con cabeceras de sección
+  const groups = new Map();
+  for (const s of filtered) {
+    const k = s.curso || 'Sin curso asignado';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+
+  list.className = 'space-y-6'; // cambia layout a vertical para las secciones
+  list.innerHTML = [...groups.entries()].map(([nombre, alumnos], gi) => {
+    const color = CURSO_COLORS[gi % CURSO_COLORS.length];
+    const cards = alumnos.map(s => _studentCardHtml(s, data, isAtt)).join('');
     return `
-    <button onclick="ingresoSeleccionarEstudiante(${origIdx})"
-      class="flex items-center gap-3 p-3.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left w-full">
-      <span class="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold flex items-center justify-center flex-shrink-0">
-        ${(s.nombre.trim()[0]||'?').toUpperCase()}
-      </span>
-      <span class="flex-1 font-medium text-gray-800 text-sm leading-tight">${s.nombre}</span>
-      ${badge}
-    </button>`;
+    <div>
+      <!-- Cabecera del curso -->
+      <div class="flex items-center gap-3 mb-3">
+        <span class="px-3 py-1 rounded-full text-xs font-bold border ${color}">${nombre}</span>
+        <span class="text-xs text-gray-400">${alumnos.length} estudiante${alumnos.length!==1?'s':''}</span>
+        <div class="flex-1 h-px bg-gray-100"></div>
+      </div>
+      <!-- Tarjetas de estudiantes -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        ${cards}
+      </div>
+    </div>`;
   }).join('');
 }
 
