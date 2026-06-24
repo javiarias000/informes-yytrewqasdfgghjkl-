@@ -2691,8 +2691,10 @@ function _updateIngresoCrumb(opts = {}) {
 }
 
 function _updateIngresoCrumb3() {
+  // Limpia solo la píldora de actividad (c4); la de curso (c3) la gestiona ingresoSelectCurso
   document.getElementById('ingreso-c2')?.classList.remove('hidden');
-  ['ingreso-c3','ingreso-c3-arr','ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  ['ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  // c3/c3-arr solo se ocultan cuando volvemos a etapa o antes
 }
 
 function renderIngresoStudentList(data) {
@@ -2759,13 +2761,17 @@ async function _showIngresoActividadesView(data) {
   const sel = document.getElementById('ingreso-act-col-sel');
   if (sel) sel.innerHTML = editableCols.map(c => `<option value="${c.index}">${c.name}</option>`).join('');
 
-  // Cargar sesiones desde DB
+  // Cargar sesiones desde DB (timeout 6 s para no colgar)
   const tab = document.getElementById('ingresoTabSelect')?.value || '';
   _ingresoSesionMap = {};
   try {
-    const r = await fetch(`/api/clase/sesiones?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(x => x.json());
+    const timeout = new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 6000));
+    const r = await Promise.race([
+      fetch(`/api/clase/sesiones?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(x => x.json()),
+      timeout,
+    ]);
     for (const s of (r.sesiones || [])) _ingresoSesionMap[s.col_index] = s;
-  } catch(_) {}
+  } catch(e) { console.warn('[actividades] sesiones fetch:', e.message); }
 
   loading.classList.add('hidden');
 
@@ -2991,7 +2997,7 @@ function _showIngresoCursosView(data) {
   grid.innerHTML = todosBtn + cursoBtns + sinCursoBtn;
 }
 
-function ingresoSelectCurso(curso) {
+async function ingresoSelectCurso(curso) {
   _ingresoCurrentCurso = curso;
   _saveNav();
   // Breadcrumb c3 (curso, morado)
@@ -3001,8 +3007,16 @@ function ingresoSelectCurso(curso) {
   if (c3) { c3.textContent = label; c3.classList.remove('hidden'); }
   if (c3arr) c3arr.classList.remove('hidden');
   ['ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
-  // Ir a actividades de ese curso
-  _showIngresoActividadesView(_ingresoData);
+  // Ir a actividades de ese curso (awaiteado para capturar errores)
+  try {
+    await _showIngresoActividadesView(_ingresoData);
+  } catch(e) {
+    console.error('[ingresoSelectCurso]', e);
+    // Volver a mostrar los cursos si falla
+    document.getElementById('ingreso-p3-actividades')?.classList.add('hidden');
+    document.getElementById('ingreso-p3-cursos')?.classList.remove('hidden');
+    alert('Error al cargar actividades: ' + e.message);
+  }
 }
 
 function ingresoVolverCursos() {
@@ -3133,9 +3147,10 @@ function _igOnRecChange(nombre, val) {
 }
 
 function igToggleRec(nombre) {
-  const el = document.getElementById(`ig-rec-${CSS.escape(nombre)}`);
+  const safeId = nombre.replace(/[^a-z0-9]/gi, '_');
+  const el = document.getElementById(`ig-rec-${safeId}`);
   el?.classList.toggle('hidden');
-  if (!el?.classList.contains('hidden')) el.querySelector('textarea')?.focus();
+  if (el && !el.classList.contains('hidden')) el.querySelector('textarea')?.focus();
 }
 
 function _igRenderStudentRows(data) {
