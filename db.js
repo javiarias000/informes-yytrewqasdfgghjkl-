@@ -170,6 +170,7 @@ async function getAllTutoresCursos(anioLectivo = '2025-2026') {
   return _all(db, `
     SELECT tc.id, tc.anio_lectivo,
            c.id AS curso_id, c.nombre AS curso, c.anio, c.paralelo, c.nivel,
+           (c.anio || '_' || c.paralelo) AS curso_key,
            d.id AS docente_id, d.nombre AS tutor, d.cargo,
            d.celular, d.correo_institucional, d.correo_personal
     FROM tutores_cursos tc

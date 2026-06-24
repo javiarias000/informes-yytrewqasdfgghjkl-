@@ -1103,6 +1103,24 @@ function tutorEditFormHtml(idx, docenteRec) {
 // Cache of tutor→curso mapping from DB (loaded once per session)
 let _tutoresCursosCache = null;
 
+// Mirror of server.js parseCursoKey — normalizes raw sheet curso names to "grade_PARALELO"
+// e.g. "1ro A" → "1_A", "1er Bach A" → "9_A", "2do Bachillerato B" → "10_B"
+function parseCursoKey(raw) {
+  const lo = (raw || '').toLowerCase().trim();
+  // Bachillerato: "1er Bach A", "2do Bach B", "1ro Bachillerato A"
+  const bachM = lo.match(/(\d+)[a-z]*\s*bach[a-z]*\s+([abc])/i);
+  if (bachM) {
+    const n = parseInt(bachM[1]);
+    const grade = n === 1 ? 9 : n === 2 ? 10 : n === 3 ? 11 : null;
+    return grade ? `${grade}_${bachM[2].toUpperCase()}` : null;
+  }
+  // Básica: "1ro A", "3er A", "10o A"
+  const gm = lo.match(/(\d+)/);
+  const pm = lo.match(/\b([abc])\s*$/i);
+  if (gm && pm) return `${parseInt(gm[1])}_${pm[1].toUpperCase()}`;
+  return null;
+}
+
 async function loadTutoresCursos() {
   if (_tutoresCursosCache) return _tutoresCursosCache;
   try {
@@ -1127,10 +1145,15 @@ async function renderNuevoCursos() {
   const tutoresCursos = await loadTutoresCursos();
 
   list.innerHTML = nuevoGroups.map((g, i) => {
-    // 1st: look up tutor by exact course name in tutores_cursos DB
-    const tcEntry = tutoresCursos.find(tc => tc.curso === g.curso);
+    // Match g.curso (raw sheet value like "1ro A", "1er Bach A") → DB entry
+    // using normalized key "grade_PARALELO" (e.g. "1_A", "9_A")
+    const cursoKey = parseCursoKey(g.curso);
+    const tcEntry  = cursoKey
+      ? tutoresCursos.find(tc => tc.curso_key === cursoKey)
+      : tutoresCursos.find(tc => tc.curso === g.curso);  // exact fallback
+
     // 2nd fallback: sheet's docenteNombre
-    const sheet   = savedSheets.find(s => s.id === (g.sheetId || nuevoSheetId));
+    const sheet = savedSheets.find(s => s.id === (g.sheetId || nuevoSheetId));
 
     let tutorRec = null;
     if (tcEntry) {
