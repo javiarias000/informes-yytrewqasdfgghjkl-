@@ -2548,7 +2548,7 @@ function ingresoSelectHoja(url) {
   c1.textContent = sheet?.materia || url.slice(0, 40);
   c1.classList.remove('hidden');
   document.getElementById('ingreso-c1-arr')?.classList.remove('hidden');
-  ['ingreso-c2','ingreso-c2-arr','ingreso-c2b','ingreso-c2b-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  ['ingreso-c2','ingreso-c2-arr','ingreso-c3','ingreso-c3-arr','ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
 
   const isAtt = _ingresoWizardType === 'asistencias';
   const periods = isAtt
@@ -2571,7 +2571,7 @@ async function ingresoSelectEtapa(tab) {
   c2.textContent = ETAPA_LABEL[tab] || tab;
   c2.classList.remove('hidden');
   document.getElementById('ingreso-c2-arr')?.classList.remove('hidden');
-  ['ingreso-c2b','ingreso-c2b-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  ['ingreso-c3','ingreso-c3-arr','ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
   _ingresoShowStep(3);
   await loadIngresoData();
 }
@@ -2581,13 +2581,9 @@ function ingresoBack() {
   if (_ingresoWizardStep === 2) { ingresoSelectTipo(_ingresoWizardType); return; }
   if (_ingresoWizardStep === 3) { ingresoSelectHoja(_ingresoCurrentUrl || ''); return; }
   if (_ingresoWizardStep === 4) {
+    // Desde el formulario del estudiante, volver a la lista de estudiantes
     _ingresoShowStep(3);
-    if (_ingresoCurrentColIdx !== null) {
-      // Volver a la vista de cursos de esa actividad
-      _showIngresoCursosView(_ingresoData);
-    } else {
-      _showIngresoActividadesView(_ingresoData);
-    }
+    _showIngresoStudentsView(_ingresoData, _ingresoCurrentCurso);
     return;
   }
 }
@@ -2624,23 +2620,19 @@ function _updateIngresoCrumb(opts = {}) {
 }
 
 function _updateIngresoCrumb3() {
-  const tab = document.getElementById('ingresoTabSelect')?.value || '';
   document.getElementById('ingreso-c2')?.classList.remove('hidden');
-  document.getElementById('ingreso-c2b')?.classList.add('hidden');
-  document.getElementById('ingreso-c2b-arr')?.classList.add('hidden');
-  const c3  = document.getElementById('ingreso-c3');
-  const c3a = document.getElementById('ingreso-c3-arr');
-  if (c3) c3.remove();
-  if (c3a) c3a.remove();
+  ['ingreso-c3','ingreso-c3-arr','ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
 }
 
 function renderIngresoStudentList(data) {
   _ingresoStudentFilter = '';
   _ingresoCurrentColIdx = null;
   _ingresoCurrentColName = '';
+  _ingresoCurrentCurso = null;
   const inp = document.getElementById('ingreso-search');
   if (inp) inp.value = '';
-  _showIngresoActividadesView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
+  // Paso 3: primero elegir curso
+  _showIngresoCursosView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
 }
 
 // ── Sub-vista 0: lista de actividades (carpetas de clase) ─────────────────────
@@ -2671,6 +2663,13 @@ async function _showIngresoActividadesView(data) {
   loading.classList.remove('hidden');
   lista.innerHTML = '';
 
+  // Subtítulo con curso activo
+  const subtitle = document.getElementById('ingreso-act-subtitle');
+  if (subtitle && _ingresoCurrentCurso) {
+    const cursoLabel = _ingresoCurrentCurso === '__NONE__' ? 'Sin curso' : _ingresoCurrentCurso;
+    subtitle.textContent = `${cursoLabel} — elige una clase o crea una nueva`;
+  }
+
   // Poblar selector de columnas en form de nueva actividad
   const sel = document.getElementById('ingreso-act-col-sel');
   if (sel) sel.innerHTML = editableCols.map(c => `<option value="${c.index}">${c.name}</option>`).join('');
@@ -2685,13 +2684,18 @@ async function _showIngresoActividadesView(data) {
 
   loading.classList.add('hidden');
 
+  // Filtrar estudiantes por curso activo para las barras de progreso
+  const relevantStudents = _ingresoCurrentCurso
+    ? (data.students || []).filter(s => _ingresoCurrentCurso === '__NONE__' ? !s.curso : s.curso === _ingresoCurrentCurso)
+    : (data.students || []);
+
   lista.innerHTML = editableCols.map((col, i) => {
     const s = sesionMap[col.index];
-    const gradeCount = (data.students || []).filter(st => {
+    const gradeCount = relevantStudents.filter(st => {
       const v = st.values?.[col.index];
       return v !== '' && v !== null && v !== undefined;
     }).length;
-    const total   = data.students?.length || 0;
+    const total   = relevantStudents.length;
     const pct     = total > 0 ? Math.round(gradeCount/total*100) : 0;
     const allDone = gradeCount === total && total > 0;
     const anyDone = gradeCount > 0;
@@ -2724,17 +2728,20 @@ async function _showIngresoActividadesView(data) {
 function ingresoSelectActividad(colIdx, colName, actLabel) {
   _ingresoCurrentColIdx  = colIdx;
   _ingresoCurrentColName = colName;
-  // Actualizar breadcrumb con la actividad
-  _updateIngresoCrumb({ actividad: actLabel || colName });
-  document.getElementById('ingreso-c2b-arr').classList.remove('hidden');
-  // Mostrar cursos
-  _showIngresoCursosView(_ingresoData);
+  // Actualizar breadcrumb c4 (actividad, verde)
+  const c4 = document.getElementById('ingreso-c4');
+  const c4arr = document.getElementById('ingreso-c4-arr');
+  if (c4) { c4.textContent = actLabel || colName; c4.classList.remove('hidden'); }
+  if (c4arr) c4arr.classList.remove('hidden');
+  // Ir a lista de estudiantes del curso actual
+  _showIngresoStudentsView(_ingresoData, _ingresoCurrentCurso);
 }
 
-function ingresoVolverActividades() {
+function ingresoVolverCursosDesdeActividades() {
   _ingresoCurrentColIdx  = null;
   _ingresoCurrentColName = '';
-  _showIngresoActividadesView(_ingresoData);
+  ['ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  _showIngresoCursosView(_ingresoData);
 }
 
 function ingresoNuevaActividad() {
@@ -2827,7 +2834,15 @@ function _showIngresoCursosView(data) {
 
 function ingresoSelectCurso(curso) {
   _ingresoCurrentCurso = curso;
-  _showIngresoStudentsView(_ingresoData, curso);
+  // Breadcrumb c3 (curso, morado)
+  const c3 = document.getElementById('ingreso-c3');
+  const c3arr = document.getElementById('ingreso-c3-arr');
+  const label = curso === '__NONE__' ? 'Sin curso' : (curso || 'Todos');
+  if (c3) { c3.textContent = label; c3.classList.remove('hidden'); }
+  if (c3arr) c3arr.classList.remove('hidden');
+  ['ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  // Ir a actividades de ese curso
+  _showIngresoActividadesView(_ingresoData);
 }
 
 function ingresoVolverCursos() {

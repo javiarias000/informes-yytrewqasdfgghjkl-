@@ -569,8 +569,10 @@
           <span id="ingreso-c1" class="hidden font-medium text-indigo-600"></span>
           <span id="ingreso-c2-arr" class="hidden">›</span>
           <span id="ingreso-c2" class="hidden font-medium text-indigo-600"></span>
-          <span id="ingreso-c2b-arr" class="hidden">›</span>
-          <span id="ingreso-c2b" class="hidden font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200"></span>
+          <span id="ingreso-c3-arr" class="hidden">›</span>
+          <span id="ingreso-c3" class="hidden font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200"></span>
+          <span id="ingreso-c4-arr" class="hidden">›</span>
+          <span id="ingreso-c4" class="hidden font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200"></span>
         </div>
       </div>
 
@@ -611,12 +613,15 @@
       <!-- Paso 3: Actividades → Cursos → Estudiantes -->
       <div id="ingreso-p3" class="hidden">
 
-        <!-- Sub-vista 0: Actividades/Carpetas (pantalla por defecto al entrar al paso 3) -->
-        <div id="ingreso-p3-actividades">
+        <!-- Sub-vista 0: Actividades/Carpetas (mostrada después de elegir curso) -->
+        <div id="ingreso-p3-actividades" class="hidden">
+          <button onclick="ingresoVolverCursosDesdeActividades()" class="text-xs text-gray-400 hover:text-gray-700 mb-3 flex items-center gap-1">
+            ← cambiar curso
+          </button>
           <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
             <div>
-              <h2 class="text-lg font-bold text-gray-800">📂 Actividades del período</h2>
-              <p class="text-sm text-gray-400" id="ingreso-act-subtitle">Elige una clase para ingresar notas</p>
+              <h2 class="text-lg font-bold text-gray-800">📂 Actividades de clase</h2>
+              <p class="text-sm text-gray-400" id="ingreso-act-subtitle">Elige una clase o crea una nueva</p>
             </div>
             <button onclick="ingresoNuevaActividad()"
               class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5">
@@ -664,15 +669,10 @@
           </div>
         </div>
 
-        <!-- Sub-vista A: selección de curso (ahora oculta por defecto) -->
-        <div id="ingreso-p3-cursos" class="hidden">
-          <div class="flex items-center gap-2 mb-4">
-            <button onclick="ingresoVolverActividades()" class="text-xs text-gray-400 hover:text-gray-700 flex items-center gap-1">
-              ← actividades
-            </button>
-          </div>
-          <h2 class="text-lg font-bold text-gray-800 mb-1">🏫 ¿De qué curso?</h2>
-          <p class="text-sm text-gray-400 mb-4">Elige un curso para ver sus estudiantes.</p>
+        <!-- Sub-vista A: selección de curso (pantalla por defecto al entrar al paso 3) -->
+        <div id="ingreso-p3-cursos">
+          <h2 class="text-lg font-bold text-gray-800 mb-1">🏫 ¿Con qué curso trabajas hoy?</h2>
+          <p class="text-sm text-gray-400 mb-4">Elige el curso y luego verás sus actividades de clase.</p>
           <div id="ingreso-cursos-grid" class="flex flex-wrap gap-3 mb-4"></div>
         </div>
 
