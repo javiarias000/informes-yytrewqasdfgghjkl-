@@ -2635,6 +2635,20 @@ function renderIngresoStudentList(data) {
   _showIngresoCursosView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
 }
 
+// ── Helpers de fecha (zona horaria Guayaquil) ─────────────────────────────────
+function _fechaGye() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guayaquil' }).format(new Date());
+}
+function _formatFecha(d) {
+  if (!d) return '';
+  const [y, m, day] = d.split('-');
+  const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  return `${parseInt(day)} ${meses[parseInt(m)-1]} ${y}`;
+}
+
+// Cache de sesiones actual (se llena en _showIngresoActividadesView)
+let _ingresoSesionMap = {};
+
 // ── Sub-vista 0: lista de actividades (carpetas de clase) ─────────────────────
 
 async function _showIngresoActividadesView(data) {
@@ -2676,10 +2690,10 @@ async function _showIngresoActividadesView(data) {
 
   // Cargar sesiones desde DB
   const tab = document.getElementById('ingresoTabSelect')?.value || '';
-  let sesionMap = {};
+  _ingresoSesionMap = {};
   try {
     const r = await fetch(`/api/clase/sesiones?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(x => x.json());
-    for (const s of (r.sesiones || [])) sesionMap[s.col_index] = s;
+    for (const s of (r.sesiones || [])) _ingresoSesionMap[s.col_index] = s;
   } catch(_) {}
 
   loading.classList.add('hidden');
@@ -2690,39 +2704,112 @@ async function _showIngresoActividadesView(data) {
     : (data.students || []);
 
   lista.innerHTML = editableCols.map((col, i) => {
-    const s = sesionMap[col.index];
-    const gradeCount = relevantStudents.filter(st => {
-      const v = st.values?.[col.index];
-      return v !== '' && v !== null && v !== undefined;
-    }).length;
-    const total   = relevantStudents.length;
-    const pct     = total > 0 ? Math.round(gradeCount/total*100) : 0;
-    const allDone = gradeCount === total && total > 0;
-    const anyDone = gradeCount > 0;
-    const progressColor = allDone ? 'text-green-600' : anyDone ? 'text-amber-600' : 'text-gray-300';
-    const borderClass   = allDone ? 'border-green-200 hover:border-green-400' : 'border-gray-100 hover:border-indigo-300';
-    const numBg         = CURSO_COLORS[i % CURSO_COLORS.length];
-    const metaDate = s?.fecha ? `📅 ${s.fecha}` : '';
-    const metaTema = s?.tema  ? `· ${s.tema}` : s ? '' : '<span class="italic text-gray-300">Sin actividad — clic para crear</span>';
-    const metaLine = [metaDate, metaTema].filter(Boolean).join(' ') || metaTema;
-
-    return `
-    <button onclick="ingresoSelectActividad(${col.index},'${col.name.replace(/'/g,"\\'")}','${(s?.tema||col.name).replace(/'/g,"\\'")}')"
-      class="w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 ${borderClass} hover:shadow-md transition text-left group">
-      <div class="w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-base flex-shrink-0 ${numBg}">${i+1}</div>
-      <div class="flex-1 min-w-0">
-        <p class="font-bold text-gray-800 text-sm">${col.name}</p>
-        <p class="text-xs text-gray-400 truncate mt-0.5">${metaLine}</p>
-        ${total > 0 ? `<div class="flex items-center gap-2 mt-1.5">
-          <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div class="h-full rounded-full transition-all ${allDone?'bg-green-400':anyDone?'bg-amber-400':'bg-gray-200'}" style="width:${pct}%"></div>
-          </div>
-          <span class="text-xs font-semibold ${progressColor}">${gradeCount}/${total}</span>
-        </div>` : ''}
-      </div>
-      <span class="text-gray-200 group-hover:text-indigo-400 text-2xl transition flex-shrink-0">›</span>
-    </button>`;
+    return _actCardHtmlIngreso(col, i, _ingresoSesionMap[col.index], relevantStudents);
   }).join('');
+}
+
+function _actCardHtmlIngreso(col, i, s, relevantStudents) {
+  const gradeCount = relevantStudents.filter(st => {
+    const v = st.values?.[col.index];
+    return v !== '' && v !== null && v !== undefined;
+  }).length;
+  const total   = relevantStudents.length;
+  const pct     = total > 0 ? Math.round(gradeCount / total * 100) : 0;
+  const allDone = gradeCount === total && total > 0;
+  const anyDone = gradeCount > 0;
+  const progressColor = allDone ? 'text-green-600' : anyDone ? 'text-amber-600' : 'text-gray-400';
+  const borderClass   = allDone ? 'border-green-200' : anyDone ? 'border-amber-100' : 'border-gray-100';
+  const numBg         = CURSO_COLORS[i % CURSO_COLORS.length];
+  const actLabel      = s?.tema || col.name;
+
+  const metaFecha = s?.fecha ? `<span class="text-indigo-500 font-medium">${_formatFecha(s.fecha)}</span>` : '';
+  const metaTema  = s?.tema  ? `<span class="text-gray-500">${s.tema}</span>` : '<span class="italic text-gray-300">Sin registro — clic para entrar</span>';
+
+  const progBar = total > 0 ? `
+    <div class="flex items-center gap-2 mt-2">
+      <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div class="h-full rounded-full transition-all ${allDone?'bg-green-400':anyDone?'bg-amber-400':'bg-gray-200'}" style="width:${pct}%"></div>
+      </div>
+      <span class="text-xs font-semibold ${progressColor}">${gradeCount}/${total}</span>
+    </div>` : '';
+
+  const actionBtns = s ? `
+    <div class="flex flex-col gap-1 flex-shrink-0">
+      <button onclick="ingresoEditActividad(${col.index},event)" title="Editar"
+        class="p-1.5 rounded-lg text-gray-300 hover:text-indigo-500 hover:bg-indigo-50 transition text-sm leading-none">✏️</button>
+      <button onclick="ingresoDeleteActividad(${col.index},event)" title="Eliminar"
+        class="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition text-sm leading-none">🗑️</button>
+    </div>` : '';
+
+  return `
+  <div id="act-card-${col.index}" class="flex items-stretch gap-2 bg-white rounded-2xl shadow-sm border-2 ${borderClass} hover:shadow-md transition">
+    <button onclick="ingresoSelectActividad(${col.index},'${col.name.replace(/'/g,"\\'")}','${actLabel.replace(/'/g,"\\'")}')"
+      class="flex-1 flex items-center gap-3 p-4 text-left group min-w-0">
+      <div class="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm flex-shrink-0 ${numBg}">${i+1}</div>
+      <div class="flex-1 min-w-0">
+        <p class="font-bold text-gray-800 text-sm truncate">${col.name}</p>
+        <div class="flex items-center gap-1.5 flex-wrap mt-0.5 text-xs">${metaFecha}${metaFecha && metaTema !== '' ? '<span class="text-gray-200">·</span>' : ''}${metaTema}</div>
+        ${progBar}
+      </div>
+      <span class="text-gray-200 group-hover:text-indigo-400 text-xl transition flex-shrink-0">›</span>
+    </button>
+    ${actionBtns}
+  </div>`;
+}
+
+function ingresoEditActividad(colIdx, ev) {
+  ev?.stopPropagation();
+  const s   = _ingresoSesionMap[colIdx];
+  const col = (_ingresoData?.editableCols || []).find(c => c.index === colIdx);
+  if (!s || !col) return;
+  const card = document.getElementById(`act-card-${colIdx}`);
+  if (!card) return;
+  card.innerHTML = `
+  <div class="flex-1 p-4">
+    <p class="text-xs font-semibold text-gray-500 mb-2">${col.name} — editar</p>
+    <div class="flex flex-col gap-2">
+      <input id="act-edit-fecha-${colIdx}" type="date" value="${s.fecha||''}"
+        class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full"/>
+      <input id="act-edit-tema-${colIdx}" type="text" value="${(s.tema||'').replace(/"/g,'&quot;')}" placeholder="Tema de la clase"
+        class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full"/>
+      <textarea id="act-edit-desc-${colIdx}" rows="2" placeholder="Descripción (opcional)"
+        class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-full resize-none">${s.descripcion||''}</textarea>
+      <div class="flex gap-2 justify-end">
+        <button onclick="ingresoCancelarEditActividad(${colIdx})"
+          class="px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">Cancelar</button>
+        <button onclick="ingresoSaveEditActividad(${colIdx})"
+          class="px-4 py-1.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700">Guardar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function ingresoSaveEditActividad(colIdx) {
+  const s     = _ingresoSesionMap[colIdx];
+  if (!s) return;
+  const fecha = document.getElementById(`act-edit-fecha-${colIdx}`)?.value || _fechaGye();
+  const tema  = document.getElementById(`act-edit-tema-${colIdx}`)?.value.trim() || null;
+  const desc  = document.getElementById(`act-edit-desc-${colIdx}`)?.value.trim() || null;
+  await fetch(`/api/clase/sesion/${s.id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tema, descripcion: desc, fecha }),
+  }).then(x => x.json()).catch(() => ({}));
+  await _showIngresoActividadesView(_ingresoData);
+}
+
+async function ingresoCancelarEditActividad(colIdx) {
+  await _showIngresoActividadesView(_ingresoData);
+}
+
+async function ingresoDeleteActividad(colIdx, ev) {
+  ev?.stopPropagation();
+  const s   = _ingresoSesionMap[colIdx];
+  const col = (_ingresoData?.editableCols || []).find(c => c.index === colIdx);
+  if (!s) return;
+  const nombre = s.tema ? `"${s.tema}"` : col?.name || `col ${colIdx}`;
+  if (!confirm(`¿Eliminar la clase ${nombre}?\nEsto borrará también sus recomendaciones.`)) return;
+  await fetch(`/api/clase/sesion/${s.id}`, { method: 'DELETE' }).catch(() => {});
+  await _showIngresoActividadesView(_ingresoData);
 }
 
 function ingresoSelectActividad(colIdx, colName, actLabel) {
@@ -2749,7 +2836,7 @@ function ingresoNuevaActividad() {
   if (!form) return;
   form.classList.toggle('hidden');
   if (!form.classList.contains('hidden')) {
-    document.getElementById('ingreso-act-fecha').value = new Date().toISOString().slice(0,10);
+    document.getElementById('ingreso-act-fecha').value = _fechaGye();
     document.getElementById('ingreso-act-tema').value  = '';
     document.getElementById('ingreso-act-desc').value  = '';
   }

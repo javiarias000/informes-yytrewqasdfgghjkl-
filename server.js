@@ -8,6 +8,18 @@ const OpenAI = require('openai');
 const XLSX = require('xlsx');
 const dbModule = require('./db');
 
+const TZ_GYE = 'America/Guayaquil';
+function todayGye() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ_GYE }).format(new Date());
+}
+function nowGye() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ_GYE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date()).replace(', ', ' ');
+}
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -1968,7 +1980,8 @@ app.delete('/api/clase/sesion/:id', async (req, res) => {
 
 app.put('/api/clase/sesion/:id', async (req, res) => {
   try {
-    const { colName, tema, descripcion, fecha } = req.body;
+    const { colName, tema, descripcion } = req.body;
+    const fecha = req.body.fecha || todayGye();
     const sesion = await dbModule.updateSesionClase(parseInt(req.params.id), { colName, tema, descripcion, fecha });
     res.json({ success: true, sesion });
   } catch(e) { res.json({ success: false, error: e.message }); }
@@ -1978,7 +1991,8 @@ app.put('/api/clase/sesion/:id', async (req, res) => {
 
 app.post('/api/clase/sesion', async (req, res) => {
   try {
-    const { sheetId, tab, colIndex, colName, tema, descripcion, fecha } = req.body;
+    const { sheetId, tab, colIndex, colName, tema, descripcion } = req.body;
+    const fecha = req.body.fecha || todayGye();   // siempre hora Guayaquil
     if (!sheetId || !tab || colIndex == null) return res.status(400).json({ success: false, error: 'Faltan parámetros' });
     const sesion = await dbModule.upsertSesionClase({ sheetId, tab, colIndex, colName, tema, descripcion, fecha });
     res.json({ success: true, sesion });
