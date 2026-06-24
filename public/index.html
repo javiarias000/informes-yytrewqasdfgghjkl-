@@ -39,6 +39,9 @@
       <div class="nav-item" id="nav-hojas" onclick="showSection('hojas')">
         <span class="text-lg">📄</span> Hojas
       </div>
+      <div class="nav-item" id="nav-padres" onclick="showSection('padres')">
+        <span class="text-lg">👨‍👩‍👧</span> Informes a padres
+      </div>
       <div class="nav-item" id="nav-whatsapp" onclick="showSection('whatsapp')">
         <span class="text-lg">💬</span> WhatsApp
         <span id="waNavBadge" class="ml-auto w-2 h-2 rounded-full bg-gray-400"></span>
@@ -316,6 +319,109 @@
       </div>
 
       <div id="sheetList" class="bg-white rounded-2xl shadow divide-y divide-gray-100 overflow-hidden"></div>
+    </div>
+
+    <!-- ── INFORMES A PADRES ── -->
+    <div id="view-padres" class="view">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-xl font-bold text-gray-800">👨‍👩‍👧 Informes a representantes</h1>
+          <p class="text-xs text-gray-400 mt-0.5">Envía las calificaciones de cada etapa escolar al WhatsApp del representante del estudiante.</p>
+        </div>
+      </div>
+
+      <!-- Configuración -->
+      <div class="bg-white rounded-2xl shadow p-5 mb-4 space-y-4">
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Configuración</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- Hoja -->
+          <div>
+            <label class="text-xs text-gray-500 font-medium">Hoja de calificaciones</label>
+            <select id="padresSheetSelect" onchange="onPadresSheetChange(this.value)"
+              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="">— Selecciona una hoja —</option>
+            </select>
+          </div>
+          <!-- Etapa -->
+          <div>
+            <label class="text-xs text-gray-500 font-medium">Etapa escolar</label>
+            <select id="padresTabSelect"
+              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="1P">Primer Parcial (1P)</option>
+              <option value="2P">Segundo Parcial (2P)</option>
+              <option value="3P">Tercer Parcial (3P)</option>
+              <option value="4P">Cuarto Parcial (4P)</option>
+              <option value="1Q">Primer Quimestre (1Q)</option>
+              <option value="2Q">Segundo Quimestre (2Q)</option>
+              <option value="Anual">Anual</option>
+            </select>
+          </div>
+          <!-- Cargar -->
+          <div class="flex items-end">
+            <button onclick="loadParentGrades()"
+              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm py-2 px-4 rounded-xl transition">
+              📥 Cargar estudiantes
+            </button>
+          </div>
+        </div>
+
+        <!-- Info de la hoja seleccionada -->
+        <div id="padresSheetInfo" class="hidden text-xs text-gray-500 flex gap-4 flex-wrap">
+          <span>📖 <strong id="padresMateriaLabel">—</strong></span>
+          <span>👤 <strong id="padresDocenteLabel">—</strong></span>
+        </div>
+      </div>
+
+      <!-- Resultados -->
+      <div id="padresResultSection" class="hidden space-y-3">
+
+        <!-- Stats + acciones -->
+        <div class="bg-white rounded-2xl shadow px-5 py-3 flex flex-wrap items-center gap-3">
+          <span id="padresStat" class="text-sm text-gray-600 flex-1"></span>
+          <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+            <input type="checkbox" id="padresSelectAll" onchange="toggleAllParentChecks(this.checked)" class="accent-indigo-600" />
+            Seleccionar todos
+          </label>
+          <button onclick="sendParentReports()"
+            class="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+            💬 Enviar seleccionados
+          </button>
+        </div>
+
+        <!-- Progress bar (hidden until sending) -->
+        <div id="padresProgressBar" class="hidden bg-white rounded-2xl shadow px-5 py-3 space-y-1">
+          <div class="flex justify-between text-xs text-gray-500">
+            <span id="padresProgressLabel">Enviando…</span>
+            <span id="padresProgressCount">0 / 0</span>
+          </div>
+          <div class="w-full bg-gray-100 rounded-full h-2">
+            <div id="padresProgressFill" class="bg-green-500 h-2 rounded-full transition-all" style="width:0%"></div>
+          </div>
+        </div>
+
+        <!-- Student list -->
+        <div class="bg-white rounded-2xl shadow overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="bg-gray-50 border-b border-gray-100 text-xs text-gray-500 font-semibold">
+                <th class="px-4 py-2.5 w-8"></th>
+                <th class="px-4 py-2.5 text-left">Estudiante</th>
+                <th class="px-4 py-2.5 text-left">Curso</th>
+                <th class="px-4 py-2.5 text-left">Teléfono</th>
+                <th class="px-4 py-2.5 text-center">Nota</th>
+                <th class="px-4 py-2.5 text-center">Estado</th>
+                <th class="px-4 py-2.5 w-10"></th>
+              </tr>
+            </thead>
+            <tbody id="padresStudentList"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="padresEmpty" class="hidden text-center py-16 text-gray-400">
+        <p class="text-4xl mb-3">📭</p>
+        <p class="text-sm">Selecciona una hoja y una etapa, luego haz clic en "Cargar estudiantes".</p>
+      </div>
     </div>
 
     <!-- ── WHATSAPP ── -->

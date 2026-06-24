@@ -1340,4 +1340,177 @@ app.post('/api/cal/map', (req, res) => {
   res.json({ success: true });
 });
 
+// ── Informes a representantes (padres de familia) ────────────────────────────
+
+// Extract grade fields from a row using column_map indices
+function extractGradeData(row, tabName) {
+  const n = (i) => { const v = row[i]; return (v != null && v !== '') ? (parseFloat(v) ?? null) : null; };
+  const s = (i) => String(row[i] || '').trim();
+
+  if (['1P','2P','3P','4P'].includes(tabName)) {
+    const nota = n(19);
+    return { nota: nota ?? 0, estado: (nota ?? 0) < 7 ? 'DIFICULTAD' : 'APROBADO' };
+  }
+  if (['1Q','2Q'].includes(tabName)) {
+    const nota = n(17);
+    return {
+      nota: nota ?? 0,
+      p1: n(3), p2: n(8), promParciales: n(13),
+      examen: n(15), escala: s(18),
+      faltasJ: n(21), faltasI: n(22),
+      estado: (nota ?? 0) < 7 ? 'DIFICULTAD' : 'APROBADO',
+    };
+  }
+  if (tabName === 'Anual') {
+    const nota = n(9);
+    return {
+      nota: nota ?? 0, q1: n(3), q2: n(4), escala: s(10),
+      faltasJ: n(14), faltasI: n(15),
+      estado: (nota ?? 0) < 7 ? 'DIFICULTAD' : 'APROBADO',
+    };
+  }
+  return { nota: 0, estado: 'APROBADO' };
+}
+
+function buildParentMessage(student, materia, periodo, tabName, docenteNombre) {
+  const fmt = (v) => (v != null && v !== '' ? Number(v).toFixed(2) : '—');
+  let msg = `📚 *Conservatorio Bolívar de Ambato*\n`;
+  msg += `_Informe de calificaciones — ${periodo}_\n\n`;
+  msg += `Estimado/a representante de *${student.nombre}*:\n`;
+  msg += `🎓 Curso: ${student.curso || '—'}  |  📖 Asignatura: ${materia}\n\n`;
+  msg += `📊 *Calificaciones ${periodo}:*\n`;
+
+  if (['1P','2P','3P','4P'].includes(tabName)) {
+    msg += `• Promedio: *${fmt(student.nota)}*\n`;
+  } else if (['1Q','2Q'].includes(tabName)) {
+    if (student.p1    != null) msg += `• 1er Parcial: ${fmt(student.p1)}\n`;
+    if (student.p2    != null) msg += `• 2do Parcial: ${fmt(student.p2)}\n`;
+    if (student.promParciales != null) msg += `• Prom. Parciales: ${fmt(student.promParciales)}\n`;
+    if (student.examen != null) msg += `• Examen Quimestral: ${fmt(student.examen)}\n`;
+    msg += `• *Nota Final: ${fmt(student.nota)}*`;
+    if (student.escala) msg += ` (${student.escala})`;
+    msg += '\n';
+    const fJ = student.faltasJ, fI = student.faltasI;
+    if (fJ || fI) {
+      msg += `\n📅 *Asistencia:*\n`;
+      if (fJ) msg += `• Justificadas: ${fJ}\n`;
+      if (fI) msg += `• Injustificadas: ${fI}\n`;
+    }
+  } else if (tabName === 'Anual') {
+    if (student.q1 != null) msg += `• 1er Quimestre: ${fmt(student.q1)}\n`;
+    if (student.q2 != null) msg += `• 2do Quimestre: ${fmt(student.q2)}\n`;
+    msg += `• *Nota Final Anual: ${fmt(student.nota)}*`;
+    if (student.escala) msg += ` (${student.escala})`;
+    msg += '\n';
+    const fJ = student.faltasJ, fI = student.faltasI;
+    if (fJ || fI) {
+      msg += `\n📅 *Asistencia anual:*\n`;
+      if (fJ) msg += `• Justificadas: ${fJ}\n`;
+      if (fI) msg += `• Injustificadas: ${fI}\n`;
+    }
+  }
+
+  msg += student.estado === 'DIFICULTAD'
+    ? '\n⚠️ *Su representado/a presenta dificultades académicas.* Le invitamos a comunicarse con la institución.\n'
+    : '\n✅ Aprobado/a en esta etapa.\n';
+
+  msg += `\n_Atentamente,_\n_${docenteNombre || 'Docente'}_\n_Conservatorio Bolívar de Ambato_`;
+  return msg;
+}
+
+// Carga calificaciones + datos de contacto para una pestaña
+app.post('/api/parent-grades', async (req, res) => {
+  try {
+    const { sheetId, tabName } = req.body;
+    if (!sheetId || !tabName) return res.json({ success: false, error: 'Falta sheetId o tabName' });
+
+    const colMap = loadColMap();
+    const tabCfg = colMap.sheets?.[tabName];
+    if (!tabCfg) return res.json({ success: false, error: `Pestaña ${tabName} no configurada` });
+    const contactCfg = colMap.sheets?.['Contacto'] || { dataStartRow: 1 };
+
+    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
+    const allTabs = await getTabNames(sheets, sheetId);
+    const contactTabName = allTabs.find(t => t.toLowerCase().includes('contacto')) || 'Contacto';
+
+    const [contactRows, gradeRows] = await Promise.all([
+      readTab(sheets, sheetId, contactTabName),
+      readTab(sheets, sheetId, tabName),
+    ]);
+
+    // Build contact map: normName → { nombre, telefono, curso }
+    const contactMap = {};
+    for (let i = contactCfg.dataStartRow ?? 1; i < contactRows.length; i++) {
+      const r = contactRows[i];
+      const ape  = String(r[1] || '').trim();
+      const nom  = String(r[2] || '').trim();
+      const full = [ape, nom].filter(Boolean).join(' ');
+      if (!full) continue;
+      contactMap[normName(full)] = {
+        nombre:   full,
+        telefono: normalizePhone(r[3]),
+        curso:    String(r[7] || '').trim(),
+      };
+    }
+
+    // Parse grade tab
+    const skipSet = new Set(tabCfg.skipRows || []);
+    const students = [];
+
+    for (let i = tabCfg.dataStartRow; i < gradeRows.length; i++) {
+      if (skipSet.has(i)) continue;
+      const r   = gradeRows[i];
+      const ape = String(r[1] || '').trim();
+      const nom = String(r[2] || '').trim();
+      const full = [ape, nom].filter(Boolean).join(' ');
+      if (!full || /total|promedio/i.test(full)) continue;
+
+      const contact = contactMap[normName(full)];
+      students.push({
+        nombre:   full,
+        curso:    contact?.curso || '',
+        telefono: contact?.telefono || null,
+        ...extractGradeData(r, tabName),
+      });
+    }
+
+    res.json({
+      success: true, tabName,
+      label:       tabCfg.label || tabName,
+      students,
+      total:       students.length,
+      conTelefono: students.filter(s => s.telefono).length,
+    });
+  } catch (e) {
+    console.error('[parent-grades]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// Envía mensajes WhatsApp a representantes
+app.post('/api/wa/send-parent-report', async (req, res) => {
+  try {
+    const { instance, materia, periodo, tabName, docenteNombre, students } = req.body;
+    if (!instance || !students?.length) return res.json({ success: false, error: 'Faltan parámetros' });
+
+    const results = [];
+    for (const s of students) {
+      if (!s.telefono) { results.push({ nombre: s.nombre, status: 'sin_telefono' }); continue; }
+      const text = buildParentMessage(s, materia, periodo, tabName, docenteNombre);
+      try {
+        await axios.post(`${EVO_URL}/message/sendText/${instance}`, { number: s.telefono, text }, { headers: evoH });
+        results.push({ nombre: s.nombre, status: 'sent', telefono: s.telefono });
+      } catch (e) {
+        results.push({ nombre: s.nombre, status: 'error', error: e.response?.data?.message || e.message });
+      }
+      await new Promise(r => setTimeout(r, 400));
+    }
+
+    res.json({ success: true, results, sent: results.filter(r => r.status === 'sent').length });
+  } catch (e) {
+    console.error('[send-parent-report]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
 app.listen(3001, () => console.log('Servidor en http://localhost:3001'));

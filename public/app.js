@@ -1470,6 +1470,7 @@ function showSection(name) {
   if (view) view.classList.add('active');
   if (nav)  nav.classList.add('active');
   if (name === 'historial') loadHistory();
+  if (name === 'padres')   initPadresView();
 }
 
 // ── Historial de envíos ────────────────────────────────────────────────────────
@@ -1841,6 +1842,259 @@ async function sendWhatsAppAll() {
   }
 
   renderResults(results, 0);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INFORMES A REPRESENTANTES (PADRES)
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _padresData     = null; // { label, tabName, students, total, conTelefono }
+let _padresSheetId  = null;
+let _padresMateria  = '';
+let _padresDocente  = '';
+
+const ETAPA_LABEL = {
+  '1P': 'Primer Parcial', '2P': 'Segundo Parcial',
+  '3P': 'Tercer Parcial', '4P': 'Cuarto Parcial',
+  '1Q': 'Primer Quimestre', '2Q': 'Segundo Quimestre',
+  'Anual': 'Anual',
+};
+
+function initPadresView() {
+  const sel = document.getElementById('padresSheetSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Selecciona una hoja —</option>';
+  const byInst = {};
+  for (const s of savedSheets) {
+    const inst = s.institution || 'Sin institución';
+    if (!byInst[inst]) byInst[inst] = [];
+    byInst[inst].push(s);
+  }
+  for (const [inst, sheets] of Object.entries(byInst)) {
+    const og = document.createElement('optgroup');
+    og.label = inst;
+    for (const s of sheets) {
+      const opt = document.createElement('option');
+      opt.value = s.id;
+      opt.textContent = `${s.materia} — ${s.tabName}`;
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+}
+
+function onPadresSheetChange(id) {
+  _padresSheetId = id || null;
+  const sheet = savedSheets.find(s => s.id === id);
+  const infoEl = document.getElementById('padresSheetInfo');
+  if (sheet && infoEl) {
+    document.getElementById('padresMateriaLabel').textContent = sheet.materia || '—';
+    document.getElementById('padresDocenteLabel').textContent = sheet.docenteNombre || '—';
+    _padresMateria = sheet.materia || '';
+    _padresDocente = sheet.docenteNombre || '';
+    infoEl.classList.remove('hidden');
+  } else if (infoEl) {
+    infoEl.classList.add('hidden');
+  }
+  // Reset results
+  _padresData = null;
+  document.getElementById('padresResultSection')?.classList.add('hidden');
+  document.getElementById('padresEmpty')?.classList.remove('hidden');
+}
+
+async function loadParentGrades() {
+  if (!_padresSheetId) { alert('Selecciona una hoja primero.'); return; }
+  const tabName = document.getElementById('padresTabSelect')?.value;
+  if (!tabName) { alert('Selecciona una etapa.'); return; }
+
+  const btn = document.querySelector('#view-padres button[onclick="loadParentGrades()"]');
+  if (btn) { btn.textContent = '⏳ Cargando…'; btn.disabled = true; }
+
+  try {
+    const res = await fetch(API + 'api/parent-grades', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetId: _padresSheetId, tabName }),
+    }).then(r => r.json());
+
+    if (!res.success) { alert('Error: ' + res.error); return; }
+    _padresData = res;
+    renderParentStudentList(res);
+  } finally {
+    if (btn) { btn.textContent = '📥 Cargar estudiantes'; btn.disabled = false; }
+  }
+}
+
+function renderParentStudentList(data) {
+  const section = document.getElementById('padresResultSection');
+  const empty   = document.getElementById('padresEmpty');
+  const tbody   = document.getElementById('padresStudentList');
+  const stat    = document.getElementById('padresStat');
+
+  if (!data.students.length) {
+    section?.classList.add('hidden');
+    empty?.classList.remove('hidden');
+    return;
+  }
+  section?.classList.remove('hidden');
+  empty?.classList.add('hidden');
+
+  const sinTel = data.total - data.conTelefono;
+  if (stat) stat.textContent =
+    `${data.total} estudiantes · ${data.conTelefono} con teléfono · ${sinTel} sin teléfono · ${data.students.filter(s=>s.estado==='DIFICULTAD').length} con dificultad`;
+
+  tbody.innerHTML = data.students.map((s, i) => {
+    const hasPhone = !!s.telefono;
+    const notaFmt  = (s.nota != null && s.nota !== 0) ? Number(s.nota).toFixed(2) : '—';
+    const difBadge = s.estado === 'DIFICULTAD'
+      ? '<span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">⚠️ Dificultad</span>'
+      : '<span class="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">✅ Aprobado</span>';
+
+    return `
+      <tr class="border-b border-gray-50 hover:bg-gray-50 transition" id="pr-row-${i}">
+        <td class="px-4 py-2.5 text-center">
+          <input type="checkbox" id="pr-chk-${i}" ${hasPhone ? 'checked' : 'disabled'}
+            class="accent-indigo-600 ${!hasPhone ? 'opacity-30' : ''}" />
+        </td>
+        <td class="px-4 py-2.5 font-medium text-gray-800">${esc(s.nombre)}</td>
+        <td class="px-4 py-2.5 text-gray-500 text-xs">${esc(s.curso) || '—'}</td>
+        <td class="px-4 py-2.5 text-xs ${hasPhone ? 'text-green-700 font-mono' : 'text-gray-300 italic'}">
+          ${hasPhone ? s.telefono : 'sin teléfono'}
+        </td>
+        <td class="px-4 py-2.5 text-center font-mono font-bold ${s.nota < 7 ? 'text-red-600' : 'text-green-700'}">${notaFmt}</td>
+        <td class="px-4 py-2.5 text-center">${difBadge}</td>
+        <td class="px-4 py-2.5 text-center">
+          <button onclick="toggleParentPreview(${i})" class="text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 rounded-lg px-2 py-0.5 hover:border-indigo-300 transition">👁</button>
+        </td>
+      </tr>
+      <tr id="pr-preview-${i}" class="hidden bg-indigo-50 border-b border-indigo-100">
+        <td colspan="7" class="px-6 py-3">
+          <p class="text-xs font-semibold text-indigo-700 mb-2">Vista previa del mensaje WhatsApp:</p>
+          <pre class="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed bg-white rounded-xl p-3 border border-indigo-100">${esc(buildParentMsgPreview(s, data.tabName))}</pre>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function buildParentMsgPreview(s, tabName) {
+  const fmt = (v) => (v != null && v !== 0 && v !== '') ? Number(v).toFixed(2) : '—';
+  const periodo = ETAPA_LABEL[tabName] || tabName;
+  let msg = `📚 Conservatorio Bolívar de Ambato\nInforme de calificaciones — ${periodo}\n\n`;
+  msg += `Estimado/a representante de ${s.nombre}:\n`;
+  msg += `🎓 Curso: ${s.curso || '—'}  |  📖 Asignatura: ${_padresMateria || '—'}\n\n`;
+  msg += `📊 Calificaciones ${periodo}:\n`;
+
+  if (['1P','2P','3P','4P'].includes(tabName)) {
+    msg += `• Promedio: ${fmt(s.nota)}\n`;
+  } else if (['1Q','2Q'].includes(tabName)) {
+    if (s.p1    != null) msg += `• 1er Parcial: ${fmt(s.p1)}\n`;
+    if (s.p2    != null) msg += `• 2do Parcial: ${fmt(s.p2)}\n`;
+    if (s.promParciales != null) msg += `• Prom. Parciales: ${fmt(s.promParciales)}\n`;
+    if (s.examen!= null) msg += `• Examen Quimestral: ${fmt(s.examen)}\n`;
+    msg += `• Nota Final: ${fmt(s.nota)}`;
+    if (s.escala) msg += ` (${s.escala})`;
+    msg += '\n';
+    if (s.faltasJ || s.faltasI) {
+      msg += `\n📅 Asistencia:\n`;
+      if (s.faltasJ) msg += `• Justificadas: ${s.faltasJ}\n`;
+      if (s.faltasI) msg += `• Injustificadas: ${s.faltasI}\n`;
+    }
+  } else if (tabName === 'Anual') {
+    if (s.q1 != null) msg += `• 1er Quimestre: ${fmt(s.q1)}\n`;
+    if (s.q2 != null) msg += `• 2do Quimestre: ${fmt(s.q2)}\n`;
+    msg += `• Nota Final Anual: ${fmt(s.nota)}`;
+    if (s.escala) msg += ` (${s.escala})`;
+    msg += '\n';
+    if (s.faltasJ || s.faltasI) {
+      msg += `\n📅 Asistencia anual:\n`;
+      if (s.faltasJ) msg += `• Justificadas: ${s.faltasJ}\n`;
+      if (s.faltasI) msg += `• Injustificadas: ${s.faltasI}\n`;
+    }
+  }
+
+  msg += s.estado === 'DIFICULTAD'
+    ? '\n⚠️ Su representado/a presenta dificultades académicas. Le invitamos a comunicarse con la institución.\n'
+    : '\n✅ Aprobado/a en esta etapa.\n';
+  msg += `\nAtentamente,\n${_padresDocente || 'Docente'}\nConservatorio Bolívar de Ambato`;
+  return msg;
+}
+
+function toggleParentPreview(i) {
+  document.getElementById(`pr-preview-${i}`)?.classList.toggle('hidden');
+}
+
+function toggleAllParentChecks(checked) {
+  if (!_padresData) return;
+  _padresData.students.forEach((s, i) => {
+    if (s.telefono) {
+      const chk = document.getElementById(`pr-chk-${i}`);
+      if (chk) chk.checked = checked;
+    }
+  });
+}
+
+async function sendParentReports() {
+  if (!waConnected || !waInstance) {
+    alert('WhatsApp no está conectado. Ve a la sección WhatsApp y escanea el QR primero.');
+    return;
+  }
+  if (!_padresData) { alert('Carga los estudiantes primero.'); return; }
+
+  const tabName  = _padresData.tabName;
+  const periodo  = ETAPA_LABEL[tabName] || tabName;
+  const selected = _padresData.students.filter((s, i) => {
+    const chk = document.getElementById(`pr-chk-${i}`);
+    return chk?.checked && s.telefono;
+  });
+
+  if (!selected.length) { alert('No hay estudiantes seleccionados con teléfono.'); return; }
+  if (!confirm(`¿Enviar ${selected.length} mensajes a representantes vía WhatsApp?`)) return;
+
+  // Show progress bar
+  const bar   = document.getElementById('padresProgressBar');
+  const fill  = document.getElementById('padresProgressFill');
+  const lbl   = document.getElementById('padresProgressLabel');
+  const cnt   = document.getElementById('padresProgressCount');
+  bar?.classList.remove('hidden');
+  if (fill)  fill.style.width = '0%';
+  if (lbl)   lbl.textContent = 'Enviando mensajes…';
+  if (cnt)   cnt.textContent = `0 / ${selected.length}`;
+
+  const res = await fetch(API + 'api/wa/send-parent-report', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instance:      waInstance,
+      materia:       _padresMateria,
+      periodo,
+      tabName,
+      docenteNombre: _padresDocente,
+      students:      selected,
+    }),
+  }).then(r => r.json());
+
+  // Update progress to 100%
+  if (fill)  fill.style.width = '100%';
+  if (lbl)   lbl.textContent  = `✅ Completado`;
+  if (cnt)   cnt.textContent  = `${res.sent ?? 0} / ${selected.length}`;
+
+  // Mark rows with result
+  if (res.results) {
+    res.results.forEach((r, idx) => {
+      const realIdx = _padresData.students.findIndex(s => s.nombre === r.nombre);
+      if (realIdx < 0) return;
+      const row = document.getElementById(`pr-row-${realIdx}`);
+      if (!row) return;
+      const last = row.querySelector('td:last-child');
+      if (!last) return;
+      if (r.status === 'sent') {
+        last.innerHTML = '<span class="text-green-600 text-xs">✅ Enviado</span>';
+      } else if (r.status === 'error') {
+        last.innerHTML = `<span class="text-red-500 text-xs" title="${esc(r.error||'')}">❌ Error</span>`;
+      }
+    });
+  }
+
+  const errCount = (res.results || []).filter(r => r.status === 'error').length;
+  if (errCount) alert(`Enviados: ${res.sent}. Errores: ${errCount}. Revisa los íconos ❌ en la lista.`);
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
