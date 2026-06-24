@@ -2303,16 +2303,13 @@ function _updateIngresoCrumb3() {
 }
 
 function renderIngresoStudentList(data) {
+  console.log('[ingreso] data recibido:', { students: data?.students?.length, courses: data?.courses, type: data?.type });
   _ingresoStudentFilter = '';
   const inp = document.getElementById('ingreso-search');
   if (inp) inp.value = '';
 
-  if (data?.courses?.length >= 1) {
-    _showIngresoCursosView(data);
-  } else {
-    _ingresoCurrentCurso = null;
-    _showIngresoStudentsView(data || { students: [], editableCols: [], type: 'grade' }, null);
-  }
+  // Siempre mostrar vista de cursos (con "Todos" si no hay cursos detectados)
+  _showIngresoCursosView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
 }
 
 // ── Paleta de colores para las burbujas de curso ─────────────────────────────
@@ -2332,16 +2329,27 @@ function _showIngresoCursosView(data) {
   document.getElementById('ingreso-p3-cursos').classList.remove('hidden');
   document.getElementById('ingreso-p3-students').classList.add('hidden');
 
-  const courses = data?.courses || [];
-  const grid    = document.getElementById('ingreso-cursos-grid');
+  const courses  = data?.courses || [];
+  const total    = data?.students?.length || 0;
+  const grid     = document.getElementById('ingreso-cursos-grid');
+  const tab      = document.getElementById('ingresoTabSelect')?.value || '';
+  const isAtt    = data?.type === 'attendance';
+  const tipoTxt  = isAtt ? 'asistencias' : 'calificaciones';
+
+  // Siempre hay un botón "Todos" al inicio
+  const todosBtn = `
+    <button onclick="ingresoSelectCurso(null)"
+      class="flex flex-col items-start gap-1 px-5 py-3.5 rounded-2xl border-2 shadow-sm transition font-medium bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200">
+      <span class="text-base font-bold">📋 Todos los cursos</span>
+      <span class="text-xs opacity-70">${total} estudiante${total!==1?'s':''} en total</span>
+    </button>`;
 
   if (!courses.length) {
-    grid.innerHTML = `<p class="text-sm text-gray-400 col-span-full">No se detectaron cursos en esta hoja.
-      <button onclick="ingresoSelectCurso(null)" class="text-indigo-500 underline ml-1">Ver todos los estudiantes</button></p>`;
+    grid.innerHTML = todosBtn;
     return;
   }
 
-  grid.innerHTML = courses.map((c, i) => {
+  const cursoBtns = courses.map((c, i) => {
     const n     = data.students.filter(s => s.curso === c).length;
     const color = CURSO_COLORS[i % CURSO_COLORS.length];
     const safe  = c.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
@@ -2352,6 +2360,8 @@ function _showIngresoCursosView(data) {
       <span class="text-xs opacity-70">${n} estudiante${n!==1?'s':''}</span>
     </button>`;
   }).join('');
+
+  grid.innerHTML = todosBtn + cursoBtns;
 }
 
 function ingresoSelectCurso(curso) {

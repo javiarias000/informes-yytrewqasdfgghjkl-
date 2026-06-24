@@ -1769,6 +1769,12 @@ app.get('/api/tab-data', async (req, res) => {
       }
 
       const courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+      console.log(`[tab-data] tab=${tab} students=${students.length} courses=${JSON.stringify(courses)}`);
+      // Debug: first 3 raw rows after dataStartRow to help diagnose detection issues
+      for (let di = tabCfg.dataStartRow; di < Math.min(tabCfg.dataStartRow+3, rows.length); di++) {
+        const dr = rows[di];
+        console.log(`  row[${di}] r[0]=${JSON.stringify(String(dr[0]||'').trim())} r[1]=${JSON.stringify(String(dr[1]||'').trim())} r[2]=${JSON.stringify(String(dr[2]||'').trim())}`);
+      }
 
       return res.json({
         success: true, tab, label: tabCfg.label || labelMap[tab] || tab,
