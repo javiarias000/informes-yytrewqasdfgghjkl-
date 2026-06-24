@@ -494,31 +494,101 @@
       </div>
 
       <!-- Paso 3: Tabla editable -->
-      <div id="ingreso-p3" class="hidden space-y-3">
-        <div id="ingresoInfoChip" class="hidden">
-          <span id="ingresoInfoText" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-full"></span>
-        </div>
-        <div id="ingresoTableContainer" class="hidden bg-white rounded-2xl shadow overflow-x-auto">
-          <table id="ingresoTable" class="w-full text-sm"></table>
-        </div>
-        <div id="ingresoActions" class="hidden flex items-center gap-3 flex-wrap">
-          <button id="ingresoSaveBtn" onclick="saveIngresoChanges()" disabled
-            class="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl transition text-sm">
-            💾 Guardar cambios (0 celdas)
+      <!-- Paso 3: Cursos → Estudiantes -->
+      <div id="ingreso-p3" class="hidden">
+
+        <!-- Sub-vista A: selección de curso -->
+        <div id="ingreso-p3-cursos">
+          <h2 class="text-lg font-bold text-gray-800 mb-1">🏫 ¿De qué curso?</h2>
+          <p class="text-sm text-gray-400 mb-4">Elige un curso para ver sus estudiantes.</p>
+          <div id="ingreso-cursos-grid" class="flex flex-wrap gap-3 mb-4"></div>
+          <button onclick="ingresoSelectCurso(null)"
+            class="text-xs text-indigo-500 hover:text-indigo-700 underline">
+            Ver todos los estudiantes
           </button>
-          <button onclick="discardIngresoChanges()"
-            class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-5 py-2.5 rounded-xl transition text-sm">
-            ↺ Descartar
-          </button>
-          <span id="ingresoSaveStatus" class="text-xs text-gray-500"></span>
         </div>
-        <div id="ingresoEmpty" class="hidden text-center py-12 text-gray-400">
-          <p class="text-4xl mb-3">📭</p><p class="text-sm">No se encontraron datos en esta pestaña.</p>
+
+        <!-- Sub-vista B: lista de estudiantes (filtrada por curso) -->
+        <div id="ingreso-p3-students" class="hidden">
+          <!-- Curso activo + buscador -->
+          <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 class="text-lg font-bold text-gray-800">👨‍🎓 Estudiantes</h2>
+              <span id="ingreso-curso-badge" class="hidden text-xs bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-full font-medium"></span>
+              <button onclick="ingresoVolverCursos()" id="ingreso-btn-cursos" class="hidden text-xs text-gray-400 hover:text-gray-700 underline">
+                ← cambiar curso
+              </button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="ingreso-p3-count" class="text-xs text-gray-400"></span>
+              <input id="ingreso-search" type="text" placeholder="Buscar…"
+                oninput="filtrarEstudiantesIngreso(this.value)"
+                class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-40" />
+            </div>
+          </div>
+          <div id="ingreso-student-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+          <div id="ingreso-student-empty" class="hidden text-center py-12 text-gray-400">
+            <p class="text-3xl mb-2">🔍</p><p class="text-sm">No se encontraron estudiantes.</p>
+          </div>
         </div>
 
         <!-- Ocultos — compatibilidad con JS existente -->
         <input type="hidden" id="ingresoSheetSelect" />
         <input type="hidden" id="ingresoTabSelect" />
+        <div id="ingresoInfoChip" class="hidden"><span id="ingresoInfoText"></span></div>
+        <div id="ingresoTableContainer" class="hidden"><table id="ingresoTable"></table></div>
+        <div id="ingresoActions" class="hidden"><button id="ingresoSaveBtn" disabled onclick="saveIngresoChanges()"></button><span id="ingresoSaveStatus"></span></div>
+        <div id="ingresoEmpty" class="hidden"></div>
+      </div>
+
+      <!-- Paso 4: Formulario CRUD del estudiante -->
+      <div id="ingreso-p4" class="hidden">
+        <div class="bg-white rounded-2xl shadow p-6 max-w-lg">
+
+          <!-- Encabezado -->
+          <div class="flex items-start justify-between mb-5 gap-3">
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-gray-400 font-medium uppercase tracking-wide mb-0.5" id="ingreso-form-etapa"></p>
+              <h3 class="text-xl font-bold text-gray-800 truncate" id="ingreso-form-nombre"></h3>
+              <div class="flex items-center gap-2 mt-0.5 flex-wrap">
+                <span id="ingreso-form-curso-badge" class="hidden text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full"></span>
+                <p class="text-xs text-gray-400" id="ingreso-form-sub"></p>
+              </div>
+            </div>
+            <div class="flex flex-col items-end gap-1 flex-shrink-0">
+              <span id="ingreso-form-num" class="text-xs bg-gray-100 text-gray-500 px-2.5 py-1 rounded-full font-medium"></span>
+              <button onclick="ingresoResetearEstudiante()" class="text-xs text-gray-400 hover:text-orange-500 transition">↺ Restablecer</button>
+            </div>
+          </div>
+
+          <!-- Campos editables (CRUD) -->
+          <div id="ingreso-form-fields" class="space-y-2.5 mb-5"></div>
+
+          <!-- Campos calculados (solo lectura, colapsables) -->
+          <div id="ingreso-form-readonly-wrap" class="hidden mb-4">
+            <button onclick="toggleIngresoReadonly()" class="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 mb-2">
+              <span id="ingreso-readonly-arrow">▶</span> Campos calculados
+            </button>
+            <div id="ingreso-form-readonly" class="hidden space-y-2"></div>
+          </div>
+
+          <!-- Acciones -->
+          <div class="flex items-center gap-2 flex-wrap pt-4 border-t border-gray-100">
+            <button onclick="ingresoGuardarEstudiante()" id="ingreso-save-btn"
+              class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2.5 rounded-xl transition text-sm">
+              💾 Guardar
+            </button>
+            <button onclick="ingresoAnteriorEstudiante()"
+              class="bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold px-3 py-2.5 rounded-xl transition text-sm">
+              ←
+            </button>
+            <button onclick="ingresoSiguienteEstudiante()"
+              class="bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold px-3 py-2.5 rounded-xl transition text-sm">
+              →
+            </button>
+            <span id="ingreso-form-status" class="text-xs font-medium hidden ml-1"></span>
+          </div>
+        </div>
       </div>
 
     </div><!-- /view-ingreso -->

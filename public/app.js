@@ -2197,7 +2197,7 @@ let _ingresoWizardStep = 0;
 let _ingresoWizardType = null; // 'calificaciones' | 'asistencias'
 
 function _ingresoShowStep(n) {
-  [0,1,2,3].forEach(i => {
+  [0,1,2,3,4].forEach(i => {
     const el = document.getElementById('ingreso-p' + i);
     if (el) el.classList.toggle('hidden', i !== n);
   });
@@ -2281,9 +2281,380 @@ function ingresoBack() {
   if (_ingresoWizardStep === 1) { initIngresoView(); return; }
   if (_ingresoWizardStep === 2) { ingresoSelectTipo(_ingresoWizardType); return; }
   if (_ingresoWizardStep === 3) { ingresoSelectHoja(_ingresoCurrentUrl || ''); return; }
+  if (_ingresoWizardStep === 4) { _ingresoShowStep(3); _updateIngresoCrumb3(); return; }
 }
 
 function onIngresoSheetChange(urlVal) { /* legacy — wizard sets _ingresoSheetId directly */ }
+
+// ── Wizard paso 3: cursos → estudiantes ──────────────────────────────────────
+let _ingresoCurrentStudentIdx = -1;
+let _ingresoStudentFilter     = '';
+let _ingresoCurrentCurso      = null; // curso seleccionado, null = todos
+
+function _updateIngresoCrumb3() {
+  const tab = document.getElementById('ingresoTabSelect')?.value || '';
+  const c2  = document.getElementById('ingreso-c2');
+  c2.textContent = ETAPA_LABEL[tab] || tab;
+  c2.classList.remove('hidden');
+  const c3  = document.getElementById('ingreso-c3');
+  const c3a = document.getElementById('ingreso-c3-arr');
+  if (c3)  c3.remove();
+  if (c3a) c3a.remove();
+}
+
+function renderIngresoStudentList(data) {
+  if (!data?.students?.length) {
+    _showIngresoCursosView(data);
+    return;
+  }
+  _ingresoStudentFilter = '';
+  const inp = document.getElementById('ingreso-search');
+  if (inp) inp.value = '';
+
+  if (data.courses?.length > 1) {
+    _showIngresoCursosView(data);
+  } else {
+    _ingresoCurrentCurso = data.courses?.[0] || null;
+    _showIngresoStudentsView(data, null);
+  }
+}
+
+// ── Sub-vista A: cursos ──────────────────────────────────────────────────────
+function _showIngresoCursosView(data) {
+  document.getElementById('ingreso-p3-cursos').classList.remove('hidden');
+  document.getElementById('ingreso-p3-students').classList.add('hidden');
+
+  const courses = data?.courses || [];
+  const grid    = document.getElementById('ingreso-cursos-grid');
+
+  if (!courses.length) {
+    grid.innerHTML = '<p class="text-sm text-gray-400">No se detectaron cursos. <button onclick="ingresoSelectCurso(null)" class="text-indigo-500 underline">Ver todos</button></p>';
+    return;
+  }
+
+  grid.innerHTML = courses.map(c => `
+    <button onclick="ingresoSelectCurso('${c.replace(/'/g,"\\'")}')"
+      class="flex items-center gap-2 px-4 py-2.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-sm font-medium text-gray-700">
+      🏫 ${c}
+      <span class="ml-1 text-xs text-gray-400">${data.students.filter(s=>s.curso===c).length}</span>
+    </button>`).join('');
+}
+
+function ingresoSelectCurso(curso) {
+  _ingresoCurrentCurso = curso;
+  _showIngresoStudentsView(_ingresoData, curso);
+}
+
+function ingresoVolverCursos() {
+  _showIngresoCursosView(_ingresoData);
+}
+
+// ── Sub-vista B: lista de estudiantes ────────────────────────────────────────
+function _showIngresoStudentsView(data, curso) {
+  document.getElementById('ingreso-p3-cursos').classList.add('hidden');
+  document.getElementById('ingreso-p3-students').classList.remove('hidden');
+
+  const badge   = document.getElementById('ingreso-curso-badge');
+  const btnBack = document.getElementById('ingreso-btn-cursos');
+  if (curso) {
+    badge.textContent = curso; badge.classList.remove('hidden');
+    btnBack?.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+    btnBack?.classList.add('hidden');
+  }
+
+  const inp = document.getElementById('ingreso-search');
+  if (inp) inp.value = '';
+  _ingresoStudentFilter = '';
+  _renderStudentCards(data, curso);
+}
+
+function _renderStudentCards(data, curso) {
+  const list  = document.getElementById('ingreso-student-list');
+  const empty = document.getElementById('ingreso-student-empty');
+  const count = document.getElementById('ingreso-p3-count');
+  const isAtt = data.type === 'attendance';
+  const q     = _ingresoStudentFilter.toLowerCase();
+
+  let filtered = curso
+    ? data.students.filter(s => s.curso === curso)
+    : data.students;
+  if (q) filtered = filtered.filter(s => s.nombre.toLowerCase().includes(q));
+
+  if (count) count.textContent = `${filtered.length} estudiante${filtered.length!==1?'s':''}`;
+
+  if (!filtered.length) {
+    list.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  list.innerHTML = filtered.map(s => {
+    const origIdx = data.students.indexOf(s);
+    let badge = '';
+    if (!isAtt && data.editableCols.length) {
+      const vals   = data.editableCols.map(c => parseFloat(s.values[c.index]) || 0).filter(v => v > 0);
+      const filled = vals.length;
+      const total  = data.editableCols.length;
+      if (filled) {
+        const avg = (vals.reduce((a,b)=>a+b,0)/filled).toFixed(2);
+        const color = parseFloat(avg) >= 7 ? 'text-green-600' : 'text-red-500';
+        badge = `<span class="ml-auto text-xs font-bold ${color}">${avg}</span><span class="text-xs text-gray-300 ml-1">(${filled}/${total})</span>`;
+      } else {
+        badge = `<span class="ml-auto text-xs text-gray-300">Sin notas</span>`;
+      }
+    } else if (isAtt) {
+      const dateCols = data.editableCols.filter(c => c.isDate);
+      const present  = dateCols.reduce((n,c) => n + (String(s.values[c.index]).toUpperCase()==='A'?1:0), 0);
+      if (dateCols.length) badge = `<span class="ml-auto text-xs text-gray-400">${present}/${dateCols.length} A</span>`;
+    }
+    return `
+    <button onclick="ingresoSeleccionarEstudiante(${origIdx})"
+      class="flex items-center gap-3 p-3.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left w-full">
+      <span class="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold flex items-center justify-center flex-shrink-0">
+        ${(s.nombre.trim()[0]||'?').toUpperCase()}
+      </span>
+      <span class="flex-1 font-medium text-gray-800 text-sm leading-tight">${s.nombre}</span>
+      ${badge}
+    </button>`;
+  }).join('');
+}
+
+function filtrarEstudiantesIngreso(q) {
+  _ingresoStudentFilter = q;
+  if (_ingresoData) _renderStudentCards(_ingresoData, _ingresoCurrentCurso);
+}
+
+// ── Wizard paso 4: formulario CRUD del estudiante ─────────────────────────────
+
+function ingresoSeleccionarEstudiante(idx) {
+  if (!_ingresoData) return;
+  _ingresoCurrentStudentIdx = idx;
+  const student = _ingresoData.students[idx];
+  const data    = _ingresoData;
+  const tab     = document.getElementById('ingresoTabSelect')?.value || data.tab;
+  const isAtt   = data.type === 'attendance';
+  const isGrade = ['1P','2P','3P','4P'].includes(tab);
+
+  // Breadcrumb
+  _updateIngresoCrumb3();
+  const nav = document.getElementById('ingreso-nav');
+  if (nav) {
+    let c3 = document.getElementById('ingreso-c3');
+    if (!c3) {
+      const arr = Object.assign(document.createElement('span'),
+        { id:'ingreso-c3-arr', textContent:'›', className:'text-gray-300' });
+      c3 = Object.assign(document.createElement('span'),
+        { id:'ingreso-c3', className:'font-medium text-indigo-600 truncate max-w-xs' });
+      nav.querySelector('.flex').appendChild(arr);
+      nav.querySelector('.flex').appendChild(c3);
+    }
+    c3.textContent = student.nombre;
+  }
+
+  // Header
+  document.getElementById('ingreso-form-etapa').textContent = ETAPA_LABEL[tab] || tab;
+  document.getElementById('ingreso-form-nombre').textContent = student.nombre;
+  document.getElementById('ingreso-form-sub').textContent    = isAtt ? 'Registro de asistencia' : 'Calificaciones por clase';
+  document.getElementById('ingreso-form-num').textContent    = `${idx+1} / ${data.students.length}`;
+  const cursoBadge = document.getElementById('ingreso-form-curso-badge');
+  if (student.curso) { cursoBadge.textContent = student.curso; cursoBadge.classList.remove('hidden'); }
+  else { cursoBadge.classList.add('hidden'); }
+
+  // Editable fields — CRUD
+  document.getElementById('ingreso-form-fields').innerHTML = data.editableCols.map(col => {
+    const val    = String(student.values[col.index] ?? '');
+    const hasVal = val !== '';
+    const fieldId = 'if-' + col.index;
+
+    if (isAtt && col.isDate) {
+      const opts = ['','A','F.J','F.I'].map(o =>
+        `<option value="${o}" ${val===o?'selected':''}>${o||'— —'}</option>`).join('');
+      return `
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-gray-600 w-24 flex-shrink-0">${col.name}</label>
+        <select id="${fieldId}" data-col="${col.index}" data-orig="${val}"
+          onchange="marcarCambioIngreso(${col.index})"
+          class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+          ${opts}
+        </select>
+        <span id="if-dot-${col.index}" class="w-2 h-2 rounded-full flex-shrink-0" style="background:transparent"></span>
+      </div>`;
+    }
+
+    return `
+    <div class="flex items-center gap-2">
+      <label class="text-sm text-gray-600 w-24 flex-shrink-0">${col.name}</label>
+      <div class="relative flex-1">
+        <input id="${fieldId}" type="${isGrade?'number':'text'}"
+          data-col="${col.index}" data-orig="${val}" value="${val}"
+          ${isGrade?'min="0" max="10" step="0.01"':''}
+          oninput="marcarCambioIngreso(${col.index})"
+          class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 ${hasVal?'pr-8':''}" />
+        ${hasVal?`<button type="button" onclick="borrarCampoIngreso(${col.index})"
+          title="Borrar" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-400 text-lg leading-none font-bold">×</button>`:''}
+      </div>
+      <span id="if-dot-${col.index}" class="w-2 h-2 rounded-full flex-shrink-0" style="background:transparent"></span>
+    </div>`;
+  }).join('');
+
+  // Readonly fields (calculated)
+  const roWrap = document.getElementById('ingreso-form-readonly-wrap');
+  const roEl   = document.getElementById('ingreso-form-readonly');
+  if (data.readonlyCols?.length) {
+    roWrap.classList.remove('hidden');
+    roEl.innerHTML = data.readonlyCols.map(col => {
+      const val = String(student.values[col.index] ?? '—');
+      return `
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gray-400 w-24 flex-shrink-0">${col.name}</span>
+        <span class="flex-1 text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2">${val}</span>
+      </div>`;
+    }).join('');
+    roEl.classList.add('hidden');
+    document.getElementById('ingreso-readonly-arrow').textContent = '▶';
+  } else {
+    roWrap.classList.add('hidden');
+  }
+
+  const st = document.getElementById('ingreso-form-status');
+  if (st) st.classList.add('hidden');
+
+  _ingresoShowStep(4);
+}
+
+function marcarCambioIngreso(colIdx) {
+  const el  = document.getElementById('if-' + colIdx);
+  const dot = document.getElementById('if-dot-' + colIdx);
+  if (!el || !dot) return;
+  const changed = el.value !== (el.dataset.orig || '');
+  dot.style.background = changed ? '#f97316' : 'transparent';
+  // Show/hide × button dynamically for text/number inputs
+  const wrap = el.parentElement;
+  if (wrap && el.tagName === 'INPUT') {
+    let btn = wrap.querySelector('button[title="Borrar"]');
+    if (el.value && !btn) {
+      btn = document.createElement('button');
+      btn.type = 'button'; btn.title = 'Borrar';
+      btn.className = 'absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-red-400 text-lg leading-none font-bold';
+      btn.textContent = '×';
+      btn.onclick = () => borrarCampoIngreso(colIdx);
+      wrap.appendChild(btn);
+    } else if (!el.value && btn) {
+      btn.remove();
+    }
+  }
+}
+
+function borrarCampoIngreso(colIdx) {
+  const el = document.getElementById('if-' + colIdx);
+  if (!el) return;
+  el.value = '';
+  marcarCambioIngreso(colIdx);
+}
+
+function ingresoResetearEstudiante() {
+  if (!_ingresoData) return;
+  const data = _ingresoData;
+  for (const col of data.editableCols) {
+    const el  = document.getElementById('if-' + col.index);
+    const dot = document.getElementById('if-dot-' + col.index);
+    if (el)  { el.value = el.dataset.orig || ''; }
+    if (dot) { dot.style.background = 'transparent'; }
+  }
+  const st = document.getElementById('ingreso-form-status');
+  if (st) st.classList.add('hidden');
+}
+
+function toggleIngresoReadonly() {
+  const el  = document.getElementById('ingreso-form-readonly');
+  const arr = document.getElementById('ingreso-readonly-arrow');
+  const hidden = el.classList.toggle('hidden');
+  arr.textContent = hidden ? '▶' : '▼';
+}
+
+async function ingresoGuardarEstudiante() {
+  const data    = _ingresoData;
+  const student = data?.students[_ingresoCurrentStudentIdx];
+  if (!student) return;
+
+  const tab     = document.getElementById('ingresoTabSelect')?.value || data.tab;
+  const updates = [];
+
+  for (const col of data.editableCols) {
+    const el = document.getElementById('if-' + col.index);
+    if (!el) continue;
+    if (el.value !== (el.dataset.orig ?? '')) {
+      updates.push({ sheetRow: student.sheetRow, col: col.index, value: el.value });
+    }
+  }
+
+  const st  = document.getElementById('ingreso-form-status');
+  const btn = document.getElementById('ingreso-save-btn');
+
+  if (!updates.length) {
+    if (st) { st.textContent = 'Sin cambios'; st.className = 'text-xs font-medium text-gray-400'; st.classList.remove('hidden'); }
+    return;
+  }
+
+  if (btn) { btn.textContent = '⏳ Guardando…'; btn.disabled = true; }
+  try {
+    const res = await fetch(API + 'api/tab-write', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetId: _ingresoSheetId, tab, updates }),
+    }).then(r => r.json());
+
+    if (res.success) {
+      for (const u of updates) student.values[u.col] = u.value;
+      for (const col of data.editableCols) {
+        const el  = document.getElementById('if-' + col.index);
+        const dot = document.getElementById('if-dot-' + col.index);
+        if (el)  { el.dataset.orig = el.value; }
+        if (dot) { dot.style.background = 'transparent'; }
+      }
+      if (st) {
+        st.textContent = `✅ ${updates.length} campo${updates.length>1?'s':''} guardado${updates.length>1?'s':''}`;
+        st.className = 'text-xs font-medium text-green-600';
+        st.classList.remove('hidden');
+      }
+    } else {
+      if (res.needsReauth) document.getElementById('ingresoReauthBanner')?.classList.remove('hidden');
+      alert('Error: ' + (res.error || 'Error desconocido'));
+    }
+  } finally {
+    if (btn) { btn.textContent = '💾 Guardar'; btn.disabled = false; }
+  }
+}
+
+function ingresoSiguienteEstudiante() {
+  const data = _ingresoData;
+  if (!data) return;
+  const list = _ingresoCurrentCurso
+    ? data.students.filter(s => s.curso === _ingresoCurrentCurso)
+    : data.students;
+  const curIdx = list.findIndex(s => data.students.indexOf(s) === _ingresoCurrentStudentIdx);
+  const next   = list[curIdx + 1];
+  if (next) {
+    ingresoSeleccionarEstudiante(data.students.indexOf(next));
+  } else {
+    _ingresoShowStep(3); _updateIngresoCrumb3();
+  }
+}
+
+function ingresoAnteriorEstudiante() {
+  const data = _ingresoData;
+  if (!data) return;
+  const list = _ingresoCurrentCurso
+    ? data.students.filter(s => s.curso === _ingresoCurrentCurso)
+    : data.students;
+  const curIdx = list.findIndex(s => data.students.indexOf(s) === _ingresoCurrentStudentIdx);
+  const prev   = list[curIdx - 1];
+  if (prev) {
+    ingresoSeleccionarEstudiante(data.students.indexOf(prev));
+  }
+}
 
 function extractSheetIdFromUrl(url) {
   const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -2316,7 +2687,7 @@ async function loadIngresoData() {
     }
     _ingresoData    = res;
     _ingresoChanges = {};
-    renderIngresoTable(res);
+    renderIngresoStudentList(res);
   } finally {
     if (btn) { btn.textContent = '📥 Cargar'; btn.disabled = false; }
   }

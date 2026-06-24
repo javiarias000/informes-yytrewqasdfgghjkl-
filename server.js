@@ -1729,25 +1729,42 @@ app.get('/api/tab-data', async (req, res) => {
       const nomIdx   = tabCfg.columns.find(c => c.name === 'Nombres')?.index   ?? 2;
       const allCols  = [...editableCols, ...readonlyCols];
       const students = [];
+      let   currentCurso = null;
 
       for (let i = tabCfg.dataStartRow; i < rows.length; i++) {
         if (skipSet.has(i)) continue;
-        const r   = rows[i];
-        const ape = String(r[apeIdx] || '').trim();
+        const r      = rows[i];
+        const noCell = String(r[0] || '').trim();
+        const ape    = String(r[apeIdx] || '').trim();
         if (!ape || /total|promedio/i.test(ape)) continue;
+
+        // Course header: Nº column empty or non-integer positive
+        const noNum = parseInt(noCell);
+        if (!noCell || isNaN(noNum) || noNum <= 0) {
+          currentCurso = ape;
+          continue;
+        }
+
         const nom    = String(r[nomIdx] || '').trim();
         const values = {};
         for (const col of allCols) {
           values[col.index] = (r[col.index] ?? '');
         }
-        students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), values });
+        students.push({
+          sheetRow: i + 1,
+          nombre: [ape, nom].filter(Boolean).join(' '),
+          curso: currentCurso || null,
+          values,
+        });
       }
+
+      const courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
 
       return res.json({
         success: true, tab, label: tabCfg.label || labelMap[tab] || tab,
         type: 'grade', editableCols, readonlyCols,
         nameCols: { ape: apeIdx, nom: nomIdx },
-        students,
+        students, courses,
       });
     }
 
@@ -1763,23 +1780,34 @@ app.get('/api/tab-data', async (req, res) => {
                        A3:'Asistencias 3er Parcial', A4:'Asistencias 4to Parcial' };
 
     const students = [];
+    let attCurso = null;
     for (let i = struct.dataStartRow; i < rows.length; i++) {
-      const r   = rows[i];
-      const ape = String(r[1] || '').trim();
+      const r      = rows[i];
+      const noCell = String(r[0] || '').trim();
+      const ape    = String(r[1] || '').trim();
       if (!ape || /total|promedio/i.test(ape)) continue;
+
+      const noNum = parseInt(noCell);
+      if (!noCell || isNaN(noNum) || noNum <= 0) {
+        attCurso = ape;
+        continue;
+      }
+
       const nom    = String(r[2] || '').trim();
       const values = {};
       for (const col of editableCols) {
         values[col.index] = (r[col.index] ?? '');
       }
-      students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), values });
+      students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), curso: attCurso || null, values });
     }
+
+    const courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
 
     return res.json({
       success: true, tab, label: labelMap[tab] || tab,
       type: 'attendance', editableCols, readonlyCols: [],
       nameCols: { ape: 1, nom: 2 },
-      students,
+      students, courses,
     });
   } catch (e) {
     if (e.response?.status === 403 || e.code === 403) {
