@@ -56,6 +56,35 @@ const SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS idx_tc_docente ON tutores_cursos(docente_id);
   CREATE INDEX IF NOT EXISTS idx_tc_curso   ON tutores_cursos(curso_id);
+
+  -- Sesiones de clase: tema y descripción compartidos por todos los alumnos de esa sesión
+  CREATE TABLE IF NOT EXISTS clases_sesiones (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sheet_id    TEXT    NOT NULL,
+    tab         TEXT    NOT NULL,
+    col_index   INTEGER NOT NULL,
+    col_name    TEXT    NOT NULL,
+    tema        TEXT,
+    descripcion TEXT,
+    fecha       TEXT    DEFAULT (date('now')),
+    created_at  TEXT    DEFAULT (datetime('now')),
+    updated_at  TEXT    DEFAULT (datetime('now')),
+    UNIQUE(sheet_id, tab, col_index)
+  );
+
+  -- Recomendaciones por estudiante: personalizada por alumno en cada sesión
+  CREATE TABLE IF NOT EXISTS clase_recomendaciones (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    sesion_id        INTEGER NOT NULL REFERENCES clases_sesiones(id) ON DELETE CASCADE,
+    student_nombre   TEXT    NOT NULL,
+    recomendacion    TEXT,
+    created_at       TEXT    DEFAULT (datetime('now')),
+    updated_at       TEXT    DEFAULT (datetime('now')),
+    UNIQUE(sesion_id, student_nombre)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_cr_sesion   ON clase_recomendaciones(sesion_id);
+  CREATE INDEX IF NOT EXISTS idx_cr_student  ON clase_recomendaciones(student_nombre);
 `;
 
 // ──────────────────────────────────────────────
@@ -205,6 +234,86 @@ async function getTutorByCursoNombre(nombreCurso, anioLectivo = '2025-2026') {
   return rows[0] || null;
 }
 
+// ──────────────────────────────────────────────
+// Sesiones de clase + Recomendaciones
+// ──────────────────────────────────────────────
+
+async function upsertSesionClase({ sheetId, tab, colIndex, colName, tema, descripcion, fecha }) {
+  const db = await getDb();
+  db.run(`
+    INSERT INTO clases_sesiones (sheet_id, tab, col_index, col_name, tema, descripcion, fecha, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(sheet_id, tab, col_index) DO UPDATE SET
+      col_name    = excluded.col_name,
+      tema        = COALESCE(excluded.tema,        tema),
+      descripcion = COALESCE(excluded.descripcion, descripcion),
+      fecha       = COALESCE(excluded.fecha,       fecha),
+      updated_at  = datetime('now')
+  `, [sheetId, tab, colIndex, colName, tema || null, descripcion || null, fecha || null]);
+  _persist();
+  const rows = _all(db, `SELECT * FROM clases_sesiones WHERE sheet_id=? AND tab=? AND col_index=?`, [sheetId, tab, colIndex]);
+  return rows[0];
+}
+
+async function getSesionClase(sheetId, tab, colIndex) {
+  const db = await getDb();
+  const rows = _all(db, `SELECT * FROM clases_sesiones WHERE sheet_id=? AND tab=? AND col_index=?`, [sheetId, tab, colIndex]);
+  return rows[0] || null;
+}
+
+async function getSesionesTab(sheetId, tab) {
+  const db = await getDb();
+  return _all(db, `
+    SELECT s.*, json_group_array(json_object('student', r.student_nombre, 'recomendacion', r.recomendacion)) AS recomendaciones_json
+    FROM clases_sesiones s
+    LEFT JOIN clase_recomendaciones r ON r.sesion_id = s.id
+    WHERE s.sheet_id=? AND s.tab=?
+    GROUP BY s.id
+    ORDER BY s.col_index
+  `, [sheetId, tab]);
+}
+
+async function upsertRecomendacion({ sheetId, tab, colIndex, colName, studentNombre, recomendacion }) {
+  const db = await getDb();
+  // Asegura que la sesión exista
+  let sesion = _all(db, `SELECT id FROM clases_sesiones WHERE sheet_id=? AND tab=? AND col_index=?`, [sheetId, tab, colIndex])[0];
+  if (!sesion) {
+    db.run(`INSERT INTO clases_sesiones (sheet_id, tab, col_index, col_name) VALUES (?,?,?,?)`, [sheetId, tab, colIndex, colName || `Col${colIndex}`]);
+    sesion = _all(db, `SELECT id FROM clases_sesiones WHERE sheet_id=? AND tab=? AND col_index=?`, [sheetId, tab, colIndex])[0];
+  }
+  db.run(`
+    INSERT INTO clase_recomendaciones (sesion_id, student_nombre, recomendacion, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(sesion_id, student_nombre) DO UPDATE SET
+      recomendacion = excluded.recomendacion,
+      updated_at    = datetime('now')
+  `, [sesion.id, studentNombre, recomendacion || null]);
+  _persist();
+}
+
+async function getRecomendacionesEstudiante(sheetId, tab, studentNombre) {
+  const db = await getDb();
+  return _all(db, `
+    SELECT s.col_index, s.col_name, s.tema, s.descripcion, r.recomendacion
+    FROM clases_sesiones s
+    JOIN clase_recomendaciones r ON r.sesion_id = s.id
+    WHERE s.sheet_id=? AND s.tab=? AND r.student_nombre=?
+    ORDER BY s.col_index
+  `, [sheetId, tab, studentNombre]);
+}
+
+async function getClaseDataCompleta(sheetId, tab) {
+  const db = await getDb();
+  const sesiones = _all(db, `SELECT * FROM clases_sesiones WHERE sheet_id=? AND tab=? ORDER BY col_index`, [sheetId, tab]);
+  const recomendaciones = _all(db, `
+    SELECT r.student_nombre, r.recomendacion, s.col_index, s.col_name
+    FROM clase_recomendaciones r
+    JOIN clases_sesiones s ON s.id = r.sesion_id
+    WHERE s.sheet_id=? AND s.tab=?
+  `, [sheetId, tab]);
+  return { sesiones, recomendaciones };
+}
+
 module.exports = {
   getDb,
   getAllDocentes,
@@ -213,5 +322,11 @@ module.exports = {
   upsertCurso,
   getAllTutoresCursos,
   linkTutorCurso,
+  upsertSesionClase,
+  getSesionClase,
+  getSesionesTab,
+  upsertRecomendacion,
+  getRecomendacionesEstudiante,
+  getClaseDataCompleta,
   getTutorByCursoNombre,
 };

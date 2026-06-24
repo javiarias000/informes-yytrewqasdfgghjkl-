@@ -2593,6 +2593,13 @@ async function confirmarAsignacion(cursoStr) {
   if (_assignIdx === null || !_ingresoData) return;
   const student = _ingresoData.students[_assignIdx];
 
+  // Verificar permisos de escritura antes de intentar
+  if (!_canWrite) {
+    cerrarAsignacion();
+    alert('No tienes permisos de escritura. Visita /auth para re-autorizar con acceso completo a Google Sheets.');
+    return;
+  }
+
   if (!student.contactoSheetRow) {
     alert(`"${student.nombre}" no tiene fila en la pestaña Contacto de este sheet. No se puede asignar automáticamente.`);
     cerrarAsignacion();
@@ -2604,13 +2611,13 @@ async function confirmarAsignacion(cursoStr) {
     return;
   }
 
-  // Indicador de carga en el botón pulsado
   const btn = event?.target;
   const orig = btn?.innerHTML;
   if (btn) { btn.innerHTML = '⏳'; btn.disabled = true; }
 
+  let r;
   try {
-    const res = await fetch('/api/tab-write', {
+    const resp = await fetch('/api/tab-write', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2619,26 +2626,29 @@ async function confirmarAsignacion(cursoStr) {
         updates: [{ sheetRow: student.contactoSheetRow, col: _ingresoData.contactoCursoCol, value: cursoStr }],
       }),
     });
-    const r = await res.json();
-
-    if (!r.success) {
-      alert('Error al guardar: ' + (r.error || 'Error desconocido'));
-      if (btn) { btn.innerHTML = orig; btn.disabled = false; }
-      return;
-    }
-
-    // Actualizar datos locales
-    student.curso = cursoStr;
-    if (!_ingresoData.courses.includes(cursoStr)) _ingresoData.courses.push(cursoStr);
-
-    cerrarAsignacion();
-    // Volver a la vista de cursos (actualizada)
-    _showIngresoCursosView(_ingresoData);
-
+    const text = await resp.text();
+    try { r = JSON.parse(text); } catch(_) { r = { success: false, error: 'Respuesta inválida del servidor: ' + text.slice(0,100) }; }
   } catch(e) {
-    alert('Error de red: ' + e.message);
-    if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+    r = { success: false, error: 'Error de conexión: ' + e.message };
   }
+
+  if (!r.success) {
+    if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+    if (r.needsReauth) {
+      cerrarAsignacion();
+      alert('Sesión de solo lectura. Ve a /auth y vuelve a autorizar para poder escribir.');
+    } else {
+      alert('No se pudo guardar: ' + (r.error || 'Error desconocido'));
+    }
+    return;
+  }
+
+  // Actualizar datos locales
+  student.curso = cursoStr;
+  if (!_ingresoData.courses.includes(cursoStr)) _ingresoData.courses.push(cursoStr);
+
+  cerrarAsignacion();
+  _showIngresoCursosView(_ingresoData);
 }
 
 // ── Wizard paso 4: formulario CRUD del estudiante ─────────────────────────────
@@ -2737,6 +2747,118 @@ function ingresoSeleccionarEstudiante(idx) {
   if (st) st.classList.add('hidden');
 
   _ingresoShowStep(4);
+
+  // Cargar panel pedagógico solo para pestañas de notas
+  if (!isAtt && data.editableCols.length) {
+    _loadClasePanelForStudent(student, data, tab);
+  } else {
+    const panel = document.getElementById('clase-panel-body')?.closest('.border');
+    if (panel) panel.classList.add('hidden');
+  }
+}
+
+// ── Panel pedagógico: tema / descripción / recomendación ──────────────────────
+
+let _claseColOptions = [];  // [{ index, name }] — columnas editables de notas
+
+function toggleClasePanel() {
+  const body  = document.getElementById('clase-panel-body');
+  const arrow = document.getElementById('clase-panel-arrow');
+  if (!body) return;
+  const hidden = body.classList.toggle('hidden');
+  if (arrow) arrow.textContent = hidden ? '▶' : '▼';
+}
+
+async function _loadClasePanelForStudent(student, data, tab) {
+  const panel = document.getElementById('clase-panel-body')?.closest('.border');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+
+  // Poblar selector de columnas de nota (Clase 1, Clase 2...)
+  const gradeCols = data.editableCols.filter(c => !c.isDate);
+  _claseColOptions = gradeCols;
+
+  const sel = document.getElementById('clase-col-select');
+  if (!sel) return;
+  sel.innerHTML = gradeCols.map(c => `<option value="${c.index}">${c.name}</option>`).join('');
+
+  // Etiqueta de recomendación
+  const recLabel = document.getElementById('clase-rec-label');
+  if (recLabel) recLabel.textContent = `Para: ${student.nombre}`;
+
+  // Cargar datos del servidor para la primera columna
+  if (gradeCols.length) await _loadClaseFieldData(gradeCols[0].index, student.nombre, tab);
+}
+
+async function _loadClaseFieldData(colIndex, studentNombre, tab) {
+  const sheetId = _ingresoSheetId;
+  if (!sheetId || !tab) return;
+
+  // Cargar sesión compartida (tema/descripción)
+  const r = await fetch(`/api/clase/sesion?sheetId=${encodeURIComponent(sheetId)}&tab=${encodeURIComponent(tab)}&colIndex=${colIndex}`)
+    .then(x => x.json()).catch(() => ({}));
+  document.getElementById('clase-tema').value        = r.sesion?.tema        || '';
+  document.getElementById('clase-descripcion').value = r.sesion?.descripcion || '';
+
+  // Cargar recomendación personalizada
+  const r2 = await fetch(`/api/clase/recomendaciones-estudiante?sheetId=${encodeURIComponent(sheetId)}&tab=${encodeURIComponent(tab)}&studentNombre=${encodeURIComponent(studentNombre)}`)
+    .then(x => x.json()).catch(() => ({}));
+  const rec = (r2.data || []).find(d => d.col_index == colIndex);
+  document.getElementById('clase-recomendacion').value = rec?.recomendacion || '';
+
+  const st = document.getElementById('clase-save-status');
+  if (st) st.classList.add('hidden');
+}
+
+async function onClaseColChange() {
+  const sel = document.getElementById('clase-col-select');
+  if (!sel || !_ingresoData) return;
+  const colIndex    = parseInt(sel.value);
+  const tab         = document.getElementById('ingresoTabSelect')?.value || _ingresoData.tab;
+  const student     = _ingresoData.students[_ingresoCurrentStudentIdx];
+  if (!student) return;
+  await _loadClaseFieldData(colIndex, student.nombre, tab);
+}
+
+async function guardarClaseInfo() {
+  if (!_ingresoData) return;
+  const student   = _ingresoData.students[_ingresoCurrentStudentIdx];
+  const tab       = document.getElementById('ingresoTabSelect')?.value || _ingresoData.tab;
+  const sel       = document.getElementById('clase-col-select');
+  const sheetId   = _ingresoSheetId;
+  if (!student || !tab || !sheetId || !sel) return;
+
+  const colIndex   = parseInt(sel.value);
+  const colOpt     = _claseColOptions.find(c => c.index === colIndex);
+  const colName    = colOpt?.name || `Col${colIndex}`;
+  const tema       = document.getElementById('clase-tema').value.trim();
+  const descripcion = document.getElementById('clase-descripcion').value.trim();
+  const recomendacion = document.getElementById('clase-recomendacion').value.trim();
+
+  const st = document.getElementById('clase-save-status');
+
+  try {
+    // 1. Guardar sesión compartida (tema/descripción)
+    if (tema || descripcion) {
+      const r1 = await fetch('/api/clase/sesion', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetId, tab, colIndex, colName, tema: tema||null, descripcion: descripcion||null }),
+      }).then(x => x.json());
+      if (!r1.success) throw new Error(r1.error);
+    }
+
+    // 2. Guardar recomendación personal
+    const r2 = await fetch('/api/clase/recomendacion', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetId, tab, colIndex, colName, studentNombre: student.nombre, recomendacion: recomendacion||null }),
+    }).then(x => x.json());
+    if (!r2.success) throw new Error(r2.error);
+
+    if (st) { st.textContent = '✓ Guardado'; st.className = 'text-xs font-medium text-green-600'; st.classList.remove('hidden'); }
+    setTimeout(() => st?.classList.add('hidden'), 2500);
+  } catch(e) {
+    if (st) { st.textContent = 'Error: ' + e.message; st.className = 'text-xs font-medium text-red-500'; st.classList.remove('hidden'); }
+  }
 }
 
 function marcarCambioIngreso(colIdx) {

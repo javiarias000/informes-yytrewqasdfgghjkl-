@@ -1941,10 +1941,80 @@ app.post('/api/tab-write', async (req, res) => {
     const updatedCells = result.data.totalUpdatedCells || updates.length;
     res.json({ success: true, updatedCells });
   } catch (e) {
-    if (e.response?.status === 403 || e.code === 403) {
+    const status = e.response?.status || e.status || parseInt(e.code);
+    console.error('[tab-write]', status, e.message);
+    if (status === 403) {
       return res.json({ success: false, error: 'No tienes permisos de escritura. Re-autoriza en /auth', needsReauth: true });
     }
-    console.error('[tab-write]', e.message);
+    res.json({ success: false, error: e.message || String(e) });
+  }
+});
+
+// ── API: clase pedagógica — sesión (tema/descripción compartida) ──────────────
+
+app.post('/api/clase/sesion', async (req, res) => {
+  try {
+    const { sheetId, tab, colIndex, colName, tema, descripcion, fecha } = req.body;
+    if (!sheetId || !tab || colIndex == null) return res.status(400).json({ success: false, error: 'Faltan parámetros' });
+    const sesion = await dbModule.upsertSesionClase({ sheetId, tab, colIndex, colName, tema, descripcion, fecha });
+    res.json({ success: true, sesion });
+  } catch (e) {
+    console.error('[clase/sesion]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/clase/sesion', async (req, res) => {
+  try {
+    const { sheetId, tab, colIndex } = req.query;
+    if (!sheetId || !tab || colIndex == null) return res.status(400).json({ success: false, error: 'Faltan parámetros' });
+    const sesion = await dbModule.getSesionClase(sheetId, tab, parseInt(colIndex));
+    res.json({ success: true, sesion: sesion || null });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/clase/sesiones', async (req, res) => {
+  try {
+    const { sheetId, tab } = req.query;
+    const sesiones = await dbModule.getSesionesTab(sheetId, tab);
+    res.json({ success: true, sesiones });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ── API: recomendación por estudiante ─────────────────────────────────────────
+
+app.post('/api/clase/recomendacion', async (req, res) => {
+  try {
+    const { sheetId, tab, colIndex, colName, studentNombre, recomendacion } = req.body;
+    if (!sheetId || !tab || colIndex == null || !studentNombre) return res.status(400).json({ success: false, error: 'Faltan parámetros' });
+    await dbModule.upsertRecomendacion({ sheetId, tab, colIndex, colName, studentNombre, recomendacion });
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[clase/recomendacion]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/clase/recomendaciones-estudiante', async (req, res) => {
+  try {
+    const { sheetId, tab, studentNombre } = req.query;
+    const data = await dbModule.getRecomendacionesEstudiante(sheetId, tab, studentNombre);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/clase/data-completa', async (req, res) => {
+  try {
+    const { sheetId, tab } = req.query;
+    const data = await dbModule.getClaseDataCompleta(sheetId, tab);
+    res.json({ success: true, ...data });
+  } catch (e) {
     res.json({ success: false, error: e.message });
   }
 });
