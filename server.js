@@ -110,7 +110,7 @@ const oauth2Client = new google.auth.OAuth2(
   REDIRECT_URI
 );
 
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly'];
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 const TOKEN_PATH = 'token.json';
 
 if (fs.existsSync(TOKEN_PATH)) {
@@ -134,7 +134,17 @@ app.get('/oauth2callback', async (req, res) => {
 });
 
 app.get('/api/auth-status', (req, res) => {
-  res.json({ authenticated: fs.existsSync(TOKEN_PATH) });
+  const authenticated = fs.existsSync(TOKEN_PATH);
+  let canWrite = false;
+  if (authenticated) {
+    try {
+      const tok = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+      const scope = tok.scope || '';
+      // Has write access if scope includes spreadsheets but NOT readonly-only
+      canWrite = scope.includes('spreadsheets') && !scope.includes('spreadsheets.readonly');
+    } catch { canWrite = false; }
+  }
+  res.json({ authenticated, canWrite });
 });
 
 // ── Google Form constants ─────────────────────────────────────────────────────
@@ -1342,6 +1352,78 @@ app.post('/api/cal/map', (req, res) => {
 
 // ── Informes a representantes (padres de familia) ────────────────────────────
 
+// Auto-detect structure of an A1-A4 attendance tab
+// Returns: { dateCols: [{index, name}], summaryCols: [{index, name}], dataStartRow }
+function detectAttendanceStructure(rows) {
+  if (!rows.length) return { dateCols: [], summaryCols: [], dataStartRow: 1 };
+  const header = rows[0];
+  const total  = header.length;
+
+  // A date-like cell: dd/mm, d/m, or short strings < 8 chars that look like dates
+  const isDateLike = (v) => {
+    const s = String(v || '').trim();
+    if (!s) return false;
+    if (/^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(s)) return true;
+    if (/^\d{1,2}-\d{1,2}(-\d{2,4})?$/.test(s)) return true;
+    // Short alphabetic date abbreviations like "Ene 5", "5 Ene", etc.
+    if (/^\d{1,2}\s+[a-záéíóú]{3}/i.test(s)) return true;
+    if (/^[a-záéíóú]{3}\s+\d{1,2}/i.test(s)) return true;
+    return false;
+  };
+
+  const isSummaryLike = (v) => {
+    const s = String(v || '').trim().toLowerCase();
+    return s.includes('falta') || s.includes('injust') || s.includes('justif') ||
+           s.includes('total') || s.includes('ausent') || s.includes('asist');
+  };
+
+  const dateCols    = [];
+  const summaryCols = [];
+
+  for (let i = 3; i < total; i++) {
+    const val = header[i];
+    if (isSummaryLike(val)) {
+      summaryCols.push({ index: i, name: String(val || '').trim() });
+    } else if (isDateLike(val)) {
+      dateCols.push({ index: i, name: String(val || '').trim() });
+    }
+  }
+
+  return { dateCols, summaryCols, dataStartRow: 1 };
+}
+
+// Extract attendance data from a row given attendance structure
+function extractAttendanceData(row, struct) {
+  const { dateCols, summaryCols } = struct;
+  let asistencias = 0, faltasJ = 0, faltasI = 0;
+
+  for (const col of dateCols) {
+    const v = String(row[col.index] || '').trim().toUpperCase();
+    if (v === 'A')       asistencias++;
+    else if (v === 'F.J' || v === 'FJ') faltasJ++;
+    else if (v === 'F.I' || v === 'FI') faltasI++;
+  }
+
+  // Also try to read from summary cols (override counted values)
+  for (const col of summaryCols) {
+    const name = col.name.toLowerCase();
+    const val  = parseFloat(String(row[col.index] || '').replace(',', '.'));
+    if (isNaN(val)) continue;
+    if (name.includes('injust') || name.includes('f.i') || name.includes('fi')) faltasI = val;
+    else if (name.includes('justif') || name.includes('f.j') || name.includes('fj')) faltasJ = val;
+  }
+
+  const totalClases    = dateCols.length;
+  const pctAsistencia  = totalClases > 0 ? Math.round((asistencias / totalClases) * 1000) / 10 : 0;
+
+  let estado;
+  if (faltasI >= 3)           estado = 'INASISTENCIAS';
+  else if (pctAsistencia < 75) estado = 'BAJO_ASISTENCIA';
+  else                         estado = 'REGULAR';
+
+  return { asistencias, faltasJ, faltasI, totalClases, pctAsistencia, estado };
+}
+
 // Extract grade fields from a row using column_map indices
 function extractGradeData(row, tabName) {
   const n = (i) => { const v = row[i]; return (v != null && v !== '') ? (parseFloat(v) ?? null) : null; };
@@ -1374,6 +1456,32 @@ function extractGradeData(row, tabName) {
 
 function buildParentMessage(student, materia, periodo, tabName, docenteNombre) {
   const fmt = (v) => (v != null && v !== '' ? Number(v).toFixed(2) : '—');
+
+  // ── Attendance tabs (A1-A4) ──────────────────────────────────────────────
+  if (['A1','A2','A3','A4'].includes(tabName)) {
+    const regLabel = { A1: '1er Parcial', A2: '2do Parcial', A3: '3er Parcial', A4: '4to Parcial' }[tabName];
+    let msg = `📚 *Conservatorio Bolívar de Ambato*\n`;
+    msg += `_Informe de asistencias — Registro ${tabName}_\n\n`;
+    msg += `Estimado/a representante de *${student.nombre}*:\n`;
+    msg += `🎓 Curso: ${student.curso || '—'} | 📖 Asignatura: ${materia}\n\n`;
+    msg += `📅 *Asistencias [${tabName}]:*\n`;
+    msg += `• Clases registradas: ${student.totalClases ?? 0}\n`;
+    msg += `• Asistencias: ${student.asistencias ?? 0}\n`;
+    msg += `• Faltas justificadas: ${student.faltasJ ?? 0}\n`;
+    msg += `• Faltas injustificadas: ${student.faltasI ?? 0}\n`;
+    msg += `• Porcentaje: ${(student.pctAsistencia ?? 0).toFixed(1)}%\n`;
+    if ((student.faltasI ?? 0) >= 3) {
+      msg += '\n⚠️ *Registra inasistencias injustificadas.* Le invitamos a comunicarse con la institución.\n';
+    } else if ((student.pctAsistencia ?? 100) < 75) {
+      msg += '\n⚠️ *Bajo porcentaje de asistencia.*\n';
+    } else {
+      msg += '\n✅ Asistencia regular.\n';
+    }
+    msg += `\n_Atentamente,_\n_${docenteNombre || 'Docente'}_\n_Conservatorio Bolívar de Ambato_`;
+    return msg;
+  }
+
+  // ── Grade tabs ────────────────────────────────────────────────────────────
   let msg = `📚 *Conservatorio Bolívar de Ambato*\n`;
   msg += `_Informe de calificaciones — ${periodo}_\n\n`;
   msg += `Estimado/a representante de *${student.nombre}*:\n`;
@@ -1424,18 +1532,23 @@ app.post('/api/parent-grades', async (req, res) => {
     const { sheetId, tabName } = req.body;
     if (!sheetId || !tabName) return res.json({ success: false, error: 'Falta sheetId o tabName' });
 
-    const colMap = loadColMap();
-    const tabCfg = colMap.sheets?.[tabName];
-    if (!tabCfg) return res.json({ success: false, error: `Pestaña ${tabName} no configurada` });
+    const isAttendance = ['A1','A2','A3','A4'].includes(tabName);
+
+    const colMap     = loadColMap();
     const contactCfg = colMap.sheets?.['Contacto'] || { dataStartRow: 1 };
 
-    const sheets = google.sheets({ version: 'v4', auth: oauth2Client });
-    const allTabs = await getTabNames(sheets, sheetId);
+    const sheets   = google.sheets({ version: 'v4', auth: oauth2Client });
+    const allTabs  = await getTabNames(sheets, sheetId);
     const contactTabName = allTabs.find(t => t.toLowerCase().includes('contacto')) || 'Contacto';
+
+    // Find the actual tab (exact match or contains)
+    const actualTab = allTabs.find(t => t === tabName) ||
+                      allTabs.find(t => t.toUpperCase().includes(tabName.toUpperCase())) ||
+                      tabName;
 
     const [contactRows, gradeRows] = await Promise.all([
       readTab(sheets, sheetId, contactTabName),
-      readTab(sheets, sheetId, tabName),
+      readTab(sheets, sheetId, actualTab),
     ]);
 
     // Build contact map: normName → { nombre, telefono, curso }
@@ -1453,8 +1566,42 @@ app.post('/api/parent-grades', async (req, res) => {
       };
     }
 
-    // Parse grade tab
-    const skipSet = new Set(tabCfg.skipRows || []);
+    // ── Attendance tabs (A1-A4) ──────────────────────────────────────────────
+    if (isAttendance) {
+      const struct   = detectAttendanceStructure(gradeRows);
+      const students = [];
+
+      for (let i = struct.dataStartRow; i < gradeRows.length; i++) {
+        const r   = gradeRows[i];
+        const ape = String(r[1] || '').trim();
+        const nom = String(r[2] || '').trim();
+        const full = [ape, nom].filter(Boolean).join(' ');
+        if (!full || /total|promedio/i.test(full)) continue;
+
+        const contact = contactMap[normName(full)];
+        students.push({
+          nombre:   full,
+          curso:    contact?.curso || '',
+          telefono: contact?.telefono || null,
+          ...extractAttendanceData(r, struct),
+        });
+      }
+
+      const labelMap = { A1: 'Asistencias 1er Parcial', A2: 'Asistencias 2do Parcial', A3: 'Asistencias 3er Parcial', A4: 'Asistencias 4to Parcial' };
+      return res.json({
+        success: true, tabName,
+        label:       labelMap[tabName] || tabName,
+        students,
+        total:       students.length,
+        conTelefono: students.filter(s => s.telefono).length,
+      });
+    }
+
+    // ── Grade tabs (existing logic) ──────────────────────────────────────────
+    const tabCfg = colMap.sheets?.[tabName];
+    if (!tabCfg) return res.json({ success: false, error: `Pestaña ${tabName} no configurada` });
+
+    const skipSet  = new Set(tabCfg.skipRows || []);
     const students = [];
 
     for (let i = tabCfg.dataStartRow; i < gradeRows.length; i++) {
@@ -1509,6 +1656,173 @@ app.post('/api/wa/send-parent-report', async (req, res) => {
     res.json({ success: true, results, sent: results.filter(r => r.status === 'sent').length });
   } catch (e) {
     console.error('[send-parent-report]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ── Helper: convert 0-based column index to A1 notation letter ───────────────
+function colLetter(n) {
+  let s = '';
+  while (true) {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    if (n < 26) break;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
+
+// ── API: tab-data — load a sheet tab for editing ──────────────────────────────
+app.get('/api/tab-data', async (req, res) => {
+  try {
+    const { sheetId, tab } = req.query;
+    if (!sheetId || !tab) return res.json({ success: false, error: 'Falta sheetId o tab' });
+
+    const sheets   = google.sheets({ version: 'v4', auth: oauth2Client });
+    const allTabs  = await getTabNames(sheets, sheetId);
+    const actualTab = allTabs.find(t => t === tab) ||
+                      allTabs.find(t => t.toUpperCase().includes(tab.toUpperCase())) ||
+                      tab;
+
+    const rows = await readTab(sheets, sheetId, actualTab);
+    if (!rows.length) return res.json({ success: false, error: 'Tab vacío o no encontrado' });
+
+    const colMap = loadColMap();
+    const isAttendance = ['A1','A2','A3','A4'].includes(tab);
+
+    // ── Grade tabs ────────────────────────────────────────────────────────────
+    if (!isAttendance) {
+      const tabCfg = colMap.sheets?.[tab];
+      if (!tabCfg) return res.json({ success: false, error: `Tab "${tab}" no configurado` });
+
+      const labelMap = { '1P':'Primer Parcial','2P':'Segundo Parcial','3P':'Tercer Parcial',
+                         '4P':'Cuarto Parcial','1Q':'Primer Quimestre','2Q':'Segundo Quimestre',
+                         'Anual':'Anual' };
+
+      // Determine editable vs readonly cols
+      let editableCols = [], readonlyCols = [];
+      if (['1P','2P','3P','4P'].includes(tab)) {
+        // Clase N1..N5 are editable (indices 3-7), Promedio parcial is readonly
+        editableCols = tabCfg.columns
+          .filter(c => c.index >= 3 && c.index <= 7)
+          .map(c => ({ index: c.index, name: c.name }));
+        readonlyCols = tabCfg.columns
+          .filter(c => c.index === 19)
+          .map(c => ({ index: c.index, name: c.name }));
+      } else if (['1Q','2Q'].includes(tab)) {
+        // Faltas cols editable
+        editableCols = tabCfg.columns
+          .filter(c => [6,7,11,12].includes(c.index))
+          .map(c => ({ index: c.index, name: c.name }));
+        readonlyCols = tabCfg.columns
+          .filter(c => ![0,1,2,6,7,11,12].includes(c.index))
+          .map(c => ({ index: c.index, name: c.name }));
+      } else {
+        // Anual: nothing editable
+        editableCols = [];
+        readonlyCols = tabCfg.columns
+          .filter(c => c.name !== 'No')
+          .map(c => ({ index: c.index, name: c.name }));
+      }
+
+      const skipSet  = new Set(tabCfg.skipRows || []);
+      const apeIdx   = tabCfg.columns.find(c => c.name === 'Apellidos')?.index ?? 1;
+      const nomIdx   = tabCfg.columns.find(c => c.name === 'Nombres')?.index   ?? 2;
+      const allCols  = [...editableCols, ...readonlyCols];
+      const students = [];
+
+      for (let i = tabCfg.dataStartRow; i < rows.length; i++) {
+        if (skipSet.has(i)) continue;
+        const r   = rows[i];
+        const ape = String(r[apeIdx] || '').trim();
+        if (!ape || /total|promedio/i.test(ape)) continue;
+        const nom    = String(r[nomIdx] || '').trim();
+        const values = {};
+        for (const col of allCols) {
+          values[col.index] = (r[col.index] ?? '');
+        }
+        students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), values });
+      }
+
+      return res.json({
+        success: true, tab, label: tabCfg.label || labelMap[tab] || tab,
+        type: 'grade', editableCols, readonlyCols,
+        nameCols: { ape: apeIdx, nom: nomIdx },
+        students,
+      });
+    }
+
+    // ── Attendance tabs (A1-A4) ──────────────────────────────────────────────
+    const struct = detectAttendanceStructure(rows);
+    const { dateCols, summaryCols } = struct;
+
+    const editableCols = [
+      ...dateCols.map(c => ({ index: c.index, name: c.name, isDate: true })),
+      ...summaryCols.map(c => ({ index: c.index, name: c.name, isDate: false })),
+    ];
+    const labelMap = { A1:'Asistencias 1er Parcial', A2:'Asistencias 2do Parcial',
+                       A3:'Asistencias 3er Parcial', A4:'Asistencias 4to Parcial' };
+
+    const students = [];
+    for (let i = struct.dataStartRow; i < rows.length; i++) {
+      const r   = rows[i];
+      const ape = String(r[1] || '').trim();
+      if (!ape || /total|promedio/i.test(ape)) continue;
+      const nom    = String(r[2] || '').trim();
+      const values = {};
+      for (const col of editableCols) {
+        values[col.index] = (r[col.index] ?? '');
+      }
+      students.push({ sheetRow: i + 1, nombre: [ape, nom].filter(Boolean).join(' '), values });
+    }
+
+    return res.json({
+      success: true, tab, label: labelMap[tab] || tab,
+      type: 'attendance', editableCols, readonlyCols: [],
+      nameCols: { ape: 1, nom: 2 },
+      students,
+    });
+  } catch (e) {
+    if (e.response?.status === 403 || e.code === 403) {
+      return res.json({ success: false, error: 'No tienes permisos de escritura. Re-autoriza en /auth', needsReauth: true });
+    }
+    console.error('[tab-data]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// ── API: tab-write — write cells back to Google Sheet ────────────────────────
+app.post('/api/tab-write', async (req, res) => {
+  try {
+    const { sheetId, tab, updates } = req.body;
+    if (!sheetId || !tab || !updates || !updates.length)
+      return res.status(400).json({ success: false, error: 'Faltan parámetros o no hay actualizaciones' });
+
+    const sheets   = google.sheets({ version: 'v4', auth: oauth2Client });
+    const allTabs  = await getTabNames(sheets, sheetId);
+    const actualTab = allTabs.find(t => t === tab) ||
+                      allTabs.find(t => t.toUpperCase().includes(tab.toUpperCase())) ||
+                      tab;
+
+    const data = updates.map(({ sheetRow, col, value }) => ({
+      range:  `'${actualTab}'!${colLetter(col)}${sheetRow}`,
+      values: [[value]],
+    }));
+
+    const result = await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data,
+      },
+    });
+
+    const updatedCells = result.data.totalUpdatedCells || updates.length;
+    res.json({ success: true, updatedCells });
+  } catch (e) {
+    if (e.response?.status === 403 || e.code === 403) {
+      return res.json({ success: false, error: 'No tienes permisos de escritura. Re-autoriza en /auth', needsReauth: true });
+    }
+    console.error('[tab-write]', e.message);
     res.json({ success: false, error: e.message });
   }
 });

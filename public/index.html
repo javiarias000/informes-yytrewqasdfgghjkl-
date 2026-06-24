@@ -39,6 +39,9 @@
       <div class="nav-item" id="nav-hojas" onclick="showSection('hojas')">
         <span class="text-lg">📄</span> Hojas
       </div>
+      <div class="nav-item" id="nav-ingreso" onclick="showSection('ingreso')">
+        <span class="text-lg">📝</span> Ingreso de datos
+      </div>
       <div class="nav-item" id="nav-padres" onclick="showSection('padres')">
         <span class="text-lg">👨‍👩‍👧</span> Informes a padres
       </div>
@@ -354,6 +357,10 @@
               <option value="1Q">Primer Quimestre (1Q)</option>
               <option value="2Q">Segundo Quimestre (2Q)</option>
               <option value="Anual">Anual</option>
+              <option value="A1">Asistencias 1er Parcial (A1)</option>
+              <option value="A2">Asistencias 2do Parcial (A2)</option>
+              <option value="A3">Asistencias 3er Parcial (A3)</option>
+              <option value="A4">Asistencias 4to Parcial (A4)</option>
             </select>
           </div>
           <!-- Cargar -->
@@ -421,6 +428,88 @@
       <div id="padresEmpty" class="hidden text-center py-16 text-gray-400">
         <p class="text-4xl mb-3">📭</p>
         <p class="text-sm">Selecciona una hoja y una etapa, luego haz clic en "Cargar estudiantes".</p>
+      </div>
+    </div>
+
+    <!-- ── INGRESO DE DATOS ── -->
+    <div id="view-ingreso" class="view">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h1 class="text-xl font-bold text-gray-800">📝 Ingreso de calificaciones / asistencias</h1>
+          <p class="text-xs text-gray-400 mt-0.5">Edita calificaciones o asistencias directamente en el Google Sheet.</p>
+        </div>
+      </div>
+
+      <!-- Re-auth banner -->
+      <div id="ingresoReauthBanner" class="hidden bg-yellow-50 border border-yellow-300 rounded-2xl px-5 py-3 mb-4 flex items-center gap-3">
+        <span class="text-yellow-600 text-lg">⚠️</span>
+        <p class="text-sm text-yellow-800 flex-1">Para ingresar datos necesitas re-autorizar con permisos de escritura.</p>
+        <a href="/auth" class="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap">→ Re-autorizar</a>
+      </div>
+
+      <!-- Configuración -->
+      <div class="bg-white rounded-2xl shadow p-5 mb-4 space-y-4">
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Configuración</p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="text-xs text-gray-500 font-medium">Hoja de calificaciones</label>
+            <select id="ingresoSheetSelect" onchange="onIngresoSheetChange(this.value)"
+              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="">— Selecciona una hoja —</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 font-medium">Pestaña</label>
+            <select id="ingresoTabSelect"
+              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              <option value="1P">1P — Primer Parcial</option>
+              <option value="2P">2P — Segundo Parcial</option>
+              <option value="3P">3P — Tercer Parcial</option>
+              <option value="4P">4P — Cuarto Parcial</option>
+              <option value="1Q">1Q — Primer Quimestre</option>
+              <option value="2Q">2Q — Segundo Quimestre</option>
+              <option value="Anual">Anual</option>
+              <option value="A1">A1 — Asistencias 1er Parcial</option>
+              <option value="A2">A2 — Asistencias 2do Parcial</option>
+              <option value="A3">A3 — Asistencias 3er Parcial</option>
+              <option value="A4">A4 — Asistencias 4to Parcial</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <button onclick="loadIngresoData()"
+              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm py-2 px-4 rounded-xl transition">
+              📥 Cargar
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info chip -->
+      <div id="ingresoInfoChip" class="hidden mb-3">
+        <span id="ingresoInfoText" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-full"></span>
+      </div>
+
+      <!-- Table container -->
+      <div id="ingresoTableContainer" class="hidden bg-white rounded-2xl shadow overflow-x-auto mb-4">
+        <table id="ingresoTable" class="w-full text-sm"></table>
+      </div>
+
+      <!-- Actions -->
+      <div id="ingresoActions" class="hidden flex items-center gap-3">
+        <button id="ingresoSaveBtn" onclick="saveIngresoChanges()" disabled
+          class="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl transition text-sm">
+          💾 Guardar cambios (0 celdas modificadas)
+        </button>
+        <button onclick="discardIngresoChanges()"
+          class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-5 py-2.5 rounded-xl transition text-sm">
+          ↺ Descartar
+        </button>
+        <span id="ingresoSaveStatus" class="text-xs text-gray-500"></span>
+      </div>
+
+      <div id="ingresoEmpty" class="text-center py-16 text-gray-400">
+        <p class="text-4xl mb-3">📝</p>
+        <p class="text-sm">Selecciona una hoja y una pestaña, luego haz clic en "Cargar".</p>
       </div>
     </div>
 

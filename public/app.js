@@ -18,12 +18,19 @@ let loadedGroups = [];
 let formFields   = [];
 
 // ── Auth ───────────────────────────────────────────────────────────────────────
+let _canWrite = false;
+
 async function checkAuth() {
-  const { authenticated } = await fetch(API + 'api/auth-status').then(r => r.json());
+  const res = await fetch(API + 'api/auth-status').then(r => r.json());
+  const { authenticated, canWrite } = res;
+  _canWrite = !!canWrite;
   document.getElementById('authNeeded').classList.toggle('hidden', authenticated);
   document.getElementById('authOk').classList.toggle('hidden', !authenticated);
   if (new URLSearchParams(location.search).get('auth') === 'ok')
     history.replaceState({}, '', location.pathname);
+  // Update ingreso reauth banner
+  const banner = document.getElementById('ingresoReauthBanner');
+  if (banner) banner.classList.toggle('hidden', !authenticated || canWrite);
 }
 
 // ── Sheet list UI ──────────────────────────────────────────────────────────────
@@ -1471,6 +1478,7 @@ function showSection(name) {
   if (nav)  nav.classList.add('active');
   if (name === 'historial') loadHistory();
   if (name === 'padres')   initPadresView();
+  if (name === 'ingreso')  initIngresoView();
 }
 
 // ── Historial de envíos ────────────────────────────────────────────────────────
@@ -1858,6 +1866,8 @@ const ETAPA_LABEL = {
   '3P': 'Tercer Parcial', '4P': 'Cuarto Parcial',
   '1Q': 'Primer Quimestre', '2Q': 'Segundo Quimestre',
   'Anual': 'Anual',
+  'A1': 'Asistencias 1er Parcial', 'A2': 'Asistencias 2do Parcial',
+  'A3': 'Asistencias 3er Parcial', 'A4': 'Asistencias 4to Parcial',
 };
 
 function initPadresView() {
@@ -1942,12 +1952,21 @@ function renderParentStudentList(data) {
   if (stat) stat.textContent =
     `${data.total} estudiantes · ${data.conTelefono} con teléfono · ${sinTel} sin teléfono · ${data.students.filter(s=>s.estado==='DIFICULTAD').length} con dificultad`;
 
+  const isAttTab = ['A1','A2','A3','A4'].includes(data.tabName);
   tbody.innerHTML = data.students.map((s, i) => {
     const hasPhone = !!s.telefono;
-    const notaFmt  = (s.nota != null && s.nota !== 0) ? Number(s.nota).toFixed(2) : '—';
-    const difBadge = s.estado === 'DIFICULTAD'
-      ? '<span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">⚠️ Dificultad</span>'
-      : '<span class="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">✅ Aprobado</span>';
+    const notaFmt  = isAttTab
+      ? (s.pctAsistencia != null ? s.pctAsistencia.toFixed(1) + '%' : '—')
+      : ((s.nota != null && s.nota !== 0) ? Number(s.nota).toFixed(2) : '—');
+    const difBadge = isAttTab
+      ? (s.estado === 'INASISTENCIAS'
+          ? '<span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">⚠️ Inasistencias</span>'
+          : s.estado === 'BAJO_ASISTENCIA'
+            ? '<span class="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full">⚠️ Bajo %</span>'
+            : '<span class="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">✅ Regular</span>')
+      : (s.estado === 'DIFICULTAD'
+          ? '<span class="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full">⚠️ Dificultad</span>'
+          : '<span class="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">✅ Aprobado</span>');
 
     return `
       <tr class="border-b border-gray-50 hover:bg-gray-50 transition" id="pr-row-${i}">
@@ -1960,7 +1979,7 @@ function renderParentStudentList(data) {
         <td class="px-4 py-2.5 text-xs ${hasPhone ? 'text-green-700 font-mono' : 'text-gray-300 italic'}">
           ${hasPhone ? s.telefono : 'sin teléfono'}
         </td>
-        <td class="px-4 py-2.5 text-center font-mono font-bold ${s.nota < 7 ? 'text-red-600' : 'text-green-700'}">${notaFmt}</td>
+        <td class="px-4 py-2.5 text-center font-mono font-bold ${isAttTab ? (s.pctAsistencia < 75 ? 'text-red-600' : 'text-green-700') : (s.nota < 7 ? 'text-red-600' : 'text-green-700')}">${notaFmt}</td>
         <td class="px-4 py-2.5 text-center">${difBadge}</td>
         <td class="px-4 py-2.5 text-center">
           <button onclick="toggleParentPreview(${i})" class="text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 rounded-lg px-2 py-0.5 hover:border-indigo-300 transition">👁</button>
@@ -1978,6 +1997,29 @@ function renderParentStudentList(data) {
 function buildParentMsgPreview(s, tabName) {
   const fmt = (v) => (v != null && v !== 0 && v !== '') ? Number(v).toFixed(2) : '—';
   const periodo = ETAPA_LABEL[tabName] || tabName;
+
+  // Attendance tabs (A1-A4)
+  if (['A1','A2','A3','A4'].includes(tabName)) {
+    let msg = `📚 Conservatorio Bolívar de Ambato\nInforme de asistencias — Registro ${tabName}\n\n`;
+    msg += `Estimado/a representante de ${s.nombre}:\n`;
+    msg += `🎓 Curso: ${s.curso || '—'} | 📖 Asignatura: ${_padresMateria || '—'}\n\n`;
+    msg += `📅 Asistencias [${tabName}]:\n`;
+    msg += `• Clases registradas: ${s.totalClases ?? 0}\n`;
+    msg += `• Asistencias: ${s.asistencias ?? 0}\n`;
+    msg += `• Faltas justificadas: ${s.faltasJ ?? 0}\n`;
+    msg += `• Faltas injustificadas: ${s.faltasI ?? 0}\n`;
+    msg += `• Porcentaje: ${(s.pctAsistencia ?? 0).toFixed(1)}%\n`;
+    if ((s.faltasI ?? 0) >= 3) {
+      msg += '\n⚠️ Registra inasistencias injustificadas. Le invitamos a comunicarse con la institución.\n';
+    } else if ((s.pctAsistencia ?? 100) < 75) {
+      msg += '\n⚠️ Bajo porcentaje de asistencia.\n';
+    } else {
+      msg += '\n✅ Asistencia regular.\n';
+    }
+    msg += `\nAtentamente,\n${_padresDocente || 'Docente'}\nConservatorio Bolívar de Ambato`;
+    return msg;
+  }
+
   let msg = `📚 Conservatorio Bolívar de Ambato\nInforme de calificaciones — ${periodo}\n\n`;
   msg += `Estimado/a representante de ${s.nombre}:\n`;
   msg += `🎓 Curso: ${s.curso || '—'}  |  📖 Asignatura: ${_padresMateria || '—'}\n\n`;
@@ -2095,6 +2137,254 @@ async function sendParentReports() {
 
   const errCount = (res.results || []).filter(r => r.status === 'error').length;
   if (errCount) alert(`Enviados: ${res.sent}. Errores: ${errCount}. Revisa los íconos ❌ en la lista.`);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INGRESO DE CALIFICACIONES / ASISTENCIAS
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _ingresoData    = null;  // response from /api/tab-data
+let _ingresoSheetId = null;
+let _ingresoChanges = {};    // { "sheetRow-col": { sheetRow, col, value } }
+
+function initIngresoView() {
+  const sel = document.getElementById('ingresoSheetSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Selecciona una hoja —</option>';
+  // Group by institution
+  const byInst = {};
+  for (const s of savedSheets) {
+    // Deduplicate by URL — pick the first tab entry per sheet URL
+    const inst = s.institution || 'Sin institución';
+    if (!byInst[inst]) byInst[inst] = [];
+    // Avoid duplicate URLs
+    if (!byInst[inst].find(e => e.url === s.url)) {
+      byInst[inst].push(s);
+    }
+  }
+  for (const [inst, sheets] of Object.entries(byInst)) {
+    const og = document.createElement('optgroup');
+    og.label = inst;
+    for (const s of sheets) {
+      const opt = document.createElement('option');
+      opt.value = s.url;   // store URL; we extract sheetId on load
+      opt.textContent = s.materia || s.institution || s.url.slice(0, 60);
+      og.appendChild(opt);
+    }
+    sel.appendChild(og);
+  }
+  // Update reauth banner
+  const banner = document.getElementById('ingresoReauthBanner');
+  if (banner) banner.classList.toggle('hidden', _canWrite);
+}
+
+function onIngresoSheetChange(urlVal) {
+  _ingresoSheetId = urlVal ? extractSheetIdFromUrl(urlVal) : null;
+}
+
+function extractSheetIdFromUrl(url) {
+  const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : url;
+}
+
+async function loadIngresoData() {
+  if (!_ingresoSheetId) {
+    // Try to get sheetId from the select
+    const selEl = document.getElementById('ingresoSheetSelect');
+    const val = selEl?.value;
+    if (!val) { alert('Selecciona una hoja primero.'); return; }
+    _ingresoSheetId = extractSheetIdFromUrl(val);
+  }
+  const tab = document.getElementById('ingresoTabSelect')?.value;
+  if (!tab) { alert('Selecciona una pestaña.'); return; }
+
+  const btn = document.querySelector('#view-ingreso button[onclick="loadIngresoData()"]');
+  if (btn) { btn.textContent = '⏳ Cargando…'; btn.disabled = true; }
+
+  try {
+    const res = await fetch(`${API}api/tab-data?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(r => r.json());
+    if (!res.success) {
+      if (res.needsReauth) {
+        const banner = document.getElementById('ingresoReauthBanner');
+        if (banner) banner.classList.remove('hidden');
+      }
+      alert('Error: ' + res.error);
+      return;
+    }
+    _ingresoData    = res;
+    _ingresoChanges = {};
+    renderIngresoTable(res);
+  } finally {
+    if (btn) { btn.textContent = '📥 Cargar'; btn.disabled = false; }
+  }
+}
+
+function renderIngresoTable(data) {
+  const container  = document.getElementById('ingresoTableContainer');
+  const actionsEl  = document.getElementById('ingresoActions');
+  const emptyEl    = document.getElementById('ingresoEmpty');
+  const chip       = document.getElementById('ingresoInfoChip');
+  const chipTxt    = document.getElementById('ingresoInfoText');
+  const table      = document.getElementById('ingresoTable');
+
+  if (!data.students.length) {
+    container?.classList.add('hidden');
+    actionsEl?.classList.add('hidden');
+    emptyEl?.classList.remove('hidden');
+    return;
+  }
+
+  emptyEl?.classList.add('hidden');
+  container?.classList.remove('hidden');
+  actionsEl?.classList.remove('hidden');
+
+  const editType = data.type === 'attendance' ? 'asistencias' : 'calificaciones';
+  const editCount = data.editableCols.length;
+  if (chip) chip.classList.remove('hidden');
+  if (chipTxt) chipTxt.textContent =
+    `${data.students.length} estudiantes · ${data.tab} — ${data.label} · ${editCount > 0 ? 'editable' : 'solo lectura'}`;
+
+  // Build header
+  const allCols = [...data.editableCols, ...data.readonlyCols];
+  const editSet = new Set(data.editableCols.map(c => c.index));
+
+  const thead = document.createElement('thead');
+  thead.innerHTML = `<tr class="bg-gray-50 border-b border-gray-100 text-xs text-gray-500 font-semibold">
+    <th class="px-3 py-2.5 text-right w-8">#</th>
+    <th class="px-3 py-2.5 text-left">Apellidos y Nombres</th>
+    ${allCols.map(c => `<th class="px-3 py-2.5 text-center ${editSet.has(c.index) ? '' : 'text-gray-400'}">${esc(c.name)}</th>`).join('')}
+  </tr>`;
+
+  const tbody = document.createElement('tbody');
+  data.students.forEach((st, rowIdx) => {
+    const tr = document.createElement('tr');
+    tr.className = 'border-b border-gray-50 hover:bg-gray-50 transition';
+    tr.id = `ing-row-${rowIdx}`;
+
+    let cells = `<td class="px-3 py-2 text-right text-gray-400 text-xs">${rowIdx + 1}</td>`;
+    cells += `<td class="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">${esc(st.nombre)}</td>`;
+
+    for (const col of allCols) {
+      const val = st.values[col.index] ?? '';
+      const isEditable = editSet.has(col.index);
+      if (!isEditable) {
+        cells += `<td class="px-3 py-2 text-center text-gray-400 bg-gray-50 text-xs">${esc(String(val))}</td>`;
+        continue;
+      }
+      const changeKey = `${st.sheetRow}-${col.index}`;
+      if (data.type === 'attendance' && col.isDate) {
+        // Attendance date cell: select A / F.J / F.I
+        const opts = ['','A','F.J','F.I'].map(v =>
+          `<option value="${v}" ${String(val).toUpperCase() === v.toUpperCase() ? 'selected' : ''}>${v || '—'}</option>`
+        ).join('');
+        cells += `<td class="px-1 py-1 text-center">
+          <select class="border border-gray-200 rounded px-1 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            onchange="onCellChange(${st.sheetRow}, ${col.index}, this.value, ${rowIdx})"
+            data-orig="${esc(String(val))}" data-key="${changeKey}">
+            ${opts}
+          </select></td>`;
+      } else if (data.type === 'attendance' && !col.isDate) {
+        // Summary attendance col: number input
+        cells += `<td class="px-1 py-1 text-center">
+          <input type="number" min="0" step="1" value="${esc(String(val))}"
+            class="w-16 border border-gray-200 rounded px-2 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            onchange="onCellChange(${st.sheetRow}, ${col.index}, this.value, ${rowIdx})"
+            data-orig="${esc(String(val))}" data-key="${changeKey}" />
+        </td>`;
+      } else {
+        // Grade: number input 0-10
+        cells += `<td class="px-1 py-1 text-center">
+          <input type="number" min="0" max="10" step="0.01" value="${esc(String(val))}"
+            class="w-20 border border-gray-200 rounded px-2 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-indigo-300"
+            onchange="onCellChange(${st.sheetRow}, ${col.index}, this.value, ${rowIdx})"
+            data-orig="${esc(String(val))}" data-key="${changeKey}" />
+        </td>`;
+      }
+    }
+
+    tr.innerHTML = cells;
+    tbody.appendChild(tr);
+  });
+
+  table.innerHTML = '';
+  table.appendChild(thead);
+  table.appendChild(tbody);
+
+  updateIngresoSaveBtn();
+}
+
+function onCellChange(sheetRow, col, value, rowIdx) {
+  const key = `${sheetRow}-${col}`;
+  // Find original value
+  if (_ingresoData) {
+    const student = _ingresoData.students.find(s => s.sheetRow === sheetRow);
+    const orig = String(student?.values[col] ?? '');
+    if (value === orig || (value === '' && orig === '')) {
+      delete _ingresoChanges[key];
+    } else {
+      _ingresoChanges[key] = { sheetRow, col, value };
+    }
+  }
+  updateIngresoSaveBtn();
+}
+
+function updateIngresoSaveBtn() {
+  const count = Object.keys(_ingresoChanges).length;
+  const btn   = document.getElementById('ingresoSaveBtn');
+  if (btn) {
+    btn.textContent = `💾 Guardar cambios (${count} celda${count !== 1 ? 's' : ''} modificada${count !== 1 ? 's' : ''})`;
+    btn.disabled = count === 0;
+  }
+}
+
+async function saveIngresoChanges() {
+  const updates = Object.values(_ingresoChanges);
+  if (!updates.length) return;
+  if (!_ingresoSheetId || !_ingresoData) return;
+
+  const tab    = _ingresoData.tab;
+  const btn    = document.getElementById('ingresoSaveBtn');
+  const status = document.getElementById('ingresoSaveStatus');
+  if (btn) { btn.textContent = '⏳ Guardando…'; btn.disabled = true; }
+  if (status) status.textContent = '';
+
+  try {
+    const res = await fetch(API + 'api/tab-write', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sheetId: _ingresoSheetId, tab, updates }),
+    }).then(r => r.json());
+
+    if (res.success) {
+      if (status) { status.textContent = `✅ ${res.updatedCells} celdas guardadas`; }
+      _ingresoChanges = {};
+      // Update orig values in data
+      for (const u of updates) {
+        const student = _ingresoData.students.find(s => s.sheetRow === u.sheetRow);
+        if (student) student.values[u.col] = u.value;
+      }
+      updateIngresoSaveBtn();
+    } else {
+      if (res.needsReauth) {
+        const banner = document.getElementById('ingresoReauthBanner');
+        if (banner) banner.classList.remove('hidden');
+      }
+      if (status) { status.textContent = '❌ ' + res.error; }
+      alert('Error al guardar: ' + res.error);
+    }
+  } catch (e) {
+    if (status) { status.textContent = '❌ Error de red'; }
+    alert('Error de red: ' + e.message);
+  } finally {
+    updateIngresoSaveBtn();
+  }
+}
+
+function discardIngresoChanges() {
+  if (!Object.keys(_ingresoChanges).length) return;
+  if (!confirm('¿Descartar todos los cambios no guardados?')) return;
+  _ingresoChanges = {};
+  // Re-render from current data
+  if (_ingresoData) renderIngresoTable(_ingresoData);
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
