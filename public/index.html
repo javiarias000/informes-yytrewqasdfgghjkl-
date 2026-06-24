@@ -324,78 +324,73 @@
       <div id="sheetList" class="bg-white rounded-2xl shadow divide-y divide-gray-100 overflow-hidden"></div>
     </div>
 
-    <!-- ── INFORMES A PADRES ── -->
+    <!-- ── INFORMES A PADRES ── wizard -->
     <div id="view-padres" class="view">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h1 class="text-xl font-bold text-gray-800">👨‍👩‍👧 Informes a representantes</h1>
-          <p class="text-xs text-gray-400 mt-0.5">Envía las calificaciones de cada etapa escolar al WhatsApp del representante del estudiante.</p>
+
+      <!-- Breadcrumb (oculto en paso 0) -->
+      <div id="padres-nav" class="hidden mb-5">
+        <button onclick="padresBack()" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition mb-2">
+          ← Volver
+        </button>
+        <div class="flex items-center gap-1.5 text-xs text-gray-400 flex-wrap">
+          <span id="padres-c0"></span>
+          <span id="padres-c1" class="hidden font-medium text-indigo-600"></span>
+          <span id="padres-c1-arr" class="hidden">›</span>
+          <span id="padres-c2" class="hidden font-medium text-indigo-600"></span>
         </div>
       </div>
 
-      <!-- Configuración -->
-      <div class="bg-white rounded-2xl shadow p-5 mb-4 space-y-4">
-        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Configuración</p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <!-- Hoja -->
-          <div>
-            <label class="text-xs text-gray-500 font-medium">Hoja de calificaciones</label>
-            <select id="padresSheetSelect" onchange="onPadresSheetChange(this.value)"
-              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-              <option value="">— Selecciona una hoja —</option>
-            </select>
-          </div>
-          <!-- Etapa -->
-          <div>
-            <label class="text-xs text-gray-500 font-medium">Etapa escolar</label>
-            <select id="padresTabSelect"
-              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-              <option value="1P">Primer Parcial (1P)</option>
-              <option value="2P">Segundo Parcial (2P)</option>
-              <option value="3P">Tercer Parcial (3P)</option>
-              <option value="4P">Cuarto Parcial (4P)</option>
-              <option value="1Q">Primer Quimestre (1Q)</option>
-              <option value="2Q">Segundo Quimestre (2Q)</option>
-              <option value="Anual">Anual</option>
-              <option value="A1">Asistencias 1er Parcial (A1)</option>
-              <option value="A2">Asistencias 2do Parcial (A2)</option>
-              <option value="A3">Asistencias 3er Parcial (A3)</option>
-              <option value="A4">Asistencias 4to Parcial (A4)</option>
-            </select>
-          </div>
-          <!-- Cargar -->
-          <div class="flex items-end">
-            <button onclick="loadParentGrades()"
-              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm py-2 px-4 rounded-xl transition">
-              📥 Cargar estudiantes
-            </button>
-          </div>
-        </div>
-
-        <!-- Info de la hoja seleccionada -->
-        <div id="padresSheetInfo" class="hidden text-xs text-gray-500 flex gap-4 flex-wrap">
-          <span>📖 <strong id="padresMateriaLabel">—</strong></span>
-          <span>👤 <strong id="padresDocenteLabel">—</strong></span>
+      <!-- Paso 0: ¿Qué quieres enviar? -->
+      <div id="padres-p0">
+        <h1 class="text-xl font-bold text-gray-800 mb-1">👨‍👩‍👧 Informes a representantes</h1>
+        <p class="text-sm text-gray-400 mb-6">¿Qué quieres enviar a los padres de familia?</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+          <button onclick="padresSelectTipo('calificaciones')"
+            class="flex flex-col items-center gap-3 p-6 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-center">
+            <span class="text-5xl">📊</span>
+            <span class="font-bold text-gray-800 text-base">Calificaciones</span>
+            <span class="text-xs text-gray-400">Notas del período escolar</span>
+          </button>
+          <button onclick="padresSelectTipo('asistencias')"
+            class="flex flex-col items-center gap-3 p-6 bg-white rounded-2xl shadow border-2 border-transparent hover:border-green-400 hover:shadow-md transition text-center">
+            <span class="text-5xl">📅</span>
+            <span class="font-bold text-gray-800 text-base">Asistencias</span>
+            <span class="text-xs text-gray-400">Registro de faltas y presencia</span>
+          </button>
         </div>
       </div>
 
-      <!-- Resultados -->
-      <div id="padresResultSection" class="hidden space-y-3">
+      <!-- Paso 1: ¿De qué hoja? -->
+      <div id="padres-p1" class="hidden">
+        <h2 class="text-lg font-bold text-gray-800 mb-1">📄 ¿De qué hoja de calificaciones?</h2>
+        <p class="text-sm text-gray-400 mb-5">Elige la materia del docente.</p>
+        <div id="padres-hojas-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+      </div>
+
+      <!-- Paso 2: ¿Qué etapa? -->
+      <div id="padres-p2" class="hidden">
+        <h2 class="text-lg font-bold text-gray-800 mb-1">📆 ¿Qué etapa escolar?</h2>
+        <p class="text-sm text-gray-400 mb-5">Elige el período que quieres reportar.</p>
+        <div id="padres-etapa-cards" class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl"></div>
+      </div>
+
+      <!-- Paso 3: Lista de estudiantes + enviar -->
+      <div id="padres-p3" class="hidden space-y-3">
 
         <!-- Stats + acciones -->
         <div class="bg-white rounded-2xl shadow px-5 py-3 flex flex-wrap items-center gap-3">
           <span id="padresStat" class="text-sm text-gray-600 flex-1"></span>
           <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
             <input type="checkbox" id="padresSelectAll" onchange="toggleAllParentChecks(this.checked)" class="accent-indigo-600" />
-            Seleccionar todos
+            Todos
           </label>
           <button onclick="sendParentReports()"
-            class="bg-green-600 hover:bg-green-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+            class="bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-5 py-2 rounded-xl transition">
             💬 Enviar seleccionados
           </button>
         </div>
 
-        <!-- Progress bar (hidden until sending) -->
+        <!-- Progress bar -->
         <div id="padresProgressBar" class="hidden bg-white rounded-2xl shadow px-5 py-3 space-y-1">
           <div class="flex justify-between text-xs text-gray-500">
             <span id="padresProgressLabel">Enviando…</span>
@@ -406,112 +401,127 @@
           </div>
         </div>
 
-        <!-- Student list -->
-        <div class="bg-white rounded-2xl shadow overflow-hidden">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="bg-gray-50 border-b border-gray-100 text-xs text-gray-500 font-semibold">
-                <th class="px-4 py-2.5 w-8"></th>
-                <th class="px-4 py-2.5 text-left">Estudiante</th>
-                <th class="px-4 py-2.5 text-left">Curso</th>
-                <th class="px-4 py-2.5 text-left">Teléfono</th>
-                <th class="px-4 py-2.5 text-center">Nota</th>
-                <th class="px-4 py-2.5 text-center">Estado</th>
-                <th class="px-4 py-2.5 w-10"></th>
-              </tr>
-            </thead>
-            <tbody id="padresStudentList"></tbody>
-          </table>
+        <!-- Tabla de estudiantes -->
+        <div id="padresResultSection" class="hidden">
+          <div class="bg-white rounded-2xl shadow overflow-hidden">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-gray-50 border-b border-gray-100 text-xs text-gray-500 font-semibold">
+                  <th class="px-4 py-2.5 w-8"></th>
+                  <th class="px-4 py-2.5 text-left">Estudiante</th>
+                  <th class="px-4 py-2.5 text-left">Curso</th>
+                  <th class="px-4 py-2.5 text-left">Teléfono</th>
+                  <th class="px-4 py-2.5 text-center">Nota</th>
+                  <th class="px-4 py-2.5 text-center">Estado</th>
+                  <th class="px-4 py-2.5 w-10"></th>
+                </tr>
+              </thead>
+              <tbody id="padresStudentList"></tbody>
+            </table>
+          </div>
         </div>
+
+        <div id="padresEmpty" class="hidden text-center py-12 text-gray-400">
+          <p class="text-4xl mb-3">📭</p>
+          <p class="text-sm">No se encontraron estudiantes.</p>
+        </div>
+
+        <!-- Ocultos — usados por JS existente para leer valores -->
+        <input type="hidden" id="padresSheetSelect" />
+        <input type="hidden" id="padresTabSelect" />
+        <span class="hidden" id="padresMateriaLabel"></span>
+        <span class="hidden" id="padresDocenteLabel"></span>
+        <div class="hidden" id="padresSheetInfo"></div>
       </div>
 
-      <div id="padresEmpty" class="hidden text-center py-16 text-gray-400">
-        <p class="text-4xl mb-3">📭</p>
-        <p class="text-sm">Selecciona una hoja y una etapa, luego haz clic en "Cargar estudiantes".</p>
-      </div>
-    </div>
+    </div><!-- /view-padres -->
 
-    <!-- ── INGRESO DE DATOS ── -->
+    <!-- ── INGRESO DE DATOS ── wizard -->
     <div id="view-ingreso" class="view">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h1 class="text-xl font-bold text-gray-800">📝 Ingreso de calificaciones / asistencias</h1>
-          <p class="text-xs text-gray-400 mt-0.5">Edita calificaciones o asistencias directamente en el Google Sheet.</p>
-        </div>
-      </div>
 
-      <!-- Re-auth banner -->
-      <div id="ingresoReauthBanner" class="hidden bg-yellow-50 border border-yellow-300 rounded-2xl px-5 py-3 mb-4 flex items-center gap-3">
-        <span class="text-yellow-600 text-lg">⚠️</span>
-        <p class="text-sm text-yellow-800 flex-1">Para ingresar datos necesitas re-autorizar con permisos de escritura.</p>
+      <!-- Re-auth banner (visible en todos los pasos si aplica) -->
+      <div id="ingresoReauthBanner" class="hidden bg-yellow-50 border border-yellow-300 rounded-2xl px-5 py-3 mb-5 flex items-center gap-3">
+        <span class="text-yellow-600 text-xl">⚠️</span>
+        <p class="text-sm text-yellow-800 flex-1">Para guardar datos necesitas <strong>re-autorizar Google</strong> con permiso de escritura.</p>
         <a href="/auth" class="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-semibold px-4 py-2 rounded-xl transition whitespace-nowrap">→ Re-autorizar</a>
       </div>
 
-      <!-- Configuración -->
-      <div class="bg-white rounded-2xl shadow p-5 mb-4 space-y-4">
-        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Configuración</p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label class="text-xs text-gray-500 font-medium">Hoja de calificaciones</label>
-            <select id="ingresoSheetSelect" onchange="onIngresoSheetChange(this.value)"
-              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-              <option value="">— Selecciona una hoja —</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs text-gray-500 font-medium">Pestaña</label>
-            <select id="ingresoTabSelect"
-              class="mt-1 w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
-              <option value="1P">1P — Primer Parcial</option>
-              <option value="2P">2P — Segundo Parcial</option>
-              <option value="3P">3P — Tercer Parcial</option>
-              <option value="4P">4P — Cuarto Parcial</option>
-              <option value="1Q">1Q — Primer Quimestre</option>
-              <option value="2Q">2Q — Segundo Quimestre</option>
-              <option value="Anual">Anual</option>
-              <option value="A1">A1 — Asistencias 1er Parcial</option>
-              <option value="A2">A2 — Asistencias 2do Parcial</option>
-              <option value="A3">A3 — Asistencias 3er Parcial</option>
-              <option value="A4">A4 — Asistencias 4to Parcial</option>
-            </select>
-          </div>
-          <div class="flex items-end">
-            <button onclick="loadIngresoData()"
-              class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm py-2 px-4 rounded-xl transition">
-              📥 Cargar
-            </button>
-          </div>
+      <!-- Breadcrumb -->
+      <div id="ingreso-nav" class="hidden mb-5">
+        <button onclick="ingresoBack()" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition mb-2">
+          ← Volver
+        </button>
+        <div class="flex items-center gap-1.5 text-xs text-gray-400 flex-wrap">
+          <span id="ingreso-c0"></span>
+          <span id="ingreso-c1" class="hidden font-medium text-indigo-600"></span>
+          <span id="ingreso-c1-arr" class="hidden">›</span>
+          <span id="ingreso-c2" class="hidden font-medium text-indigo-600"></span>
         </div>
       </div>
 
-      <!-- Info chip -->
-      <div id="ingresoInfoChip" class="hidden mb-3">
-        <span id="ingresoInfoText" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-full"></span>
+      <!-- Paso 0: ¿Qué quieres ingresar? -->
+      <div id="ingreso-p0">
+        <h1 class="text-xl font-bold text-gray-800 mb-1">📝 Ingreso de datos</h1>
+        <p class="text-sm text-gray-400 mb-6">¿Qué quieres registrar en el Google Sheet?</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-xl">
+          <button onclick="ingresoSelectTipo('calificaciones')"
+            class="flex flex-col items-center gap-3 p-6 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-center">
+            <span class="text-5xl">📊</span>
+            <span class="font-bold text-gray-800 text-base">Ingresar calificaciones</span>
+            <span class="text-xs text-gray-400">Notas por clase y período</span>
+          </button>
+          <button onclick="ingresoSelectTipo('asistencias')"
+            class="flex flex-col items-center gap-3 p-6 bg-white rounded-2xl shadow border-2 border-transparent hover:border-green-400 hover:shadow-md transition text-center">
+            <span class="text-5xl">📋</span>
+            <span class="font-bold text-gray-800 text-base">Ingresar asistencias</span>
+            <span class="text-xs text-gray-400">Registro de asistencia por día</span>
+          </button>
+        </div>
       </div>
 
-      <!-- Table container -->
-      <div id="ingresoTableContainer" class="hidden bg-white rounded-2xl shadow overflow-x-auto mb-4">
-        <table id="ingresoTable" class="w-full text-sm"></table>
+      <!-- Paso 1: ¿De qué hoja? -->
+      <div id="ingreso-p1" class="hidden">
+        <h2 class="text-lg font-bold text-gray-800 mb-1">📄 ¿De qué hoja?</h2>
+        <p class="text-sm text-gray-400 mb-5">Elige la materia y docente.</p>
+        <div id="ingreso-hojas-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
       </div>
 
-      <!-- Actions -->
-      <div id="ingresoActions" class="hidden flex items-center gap-3">
-        <button id="ingresoSaveBtn" onclick="saveIngresoChanges()" disabled
-          class="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl transition text-sm">
-          💾 Guardar cambios (0 celdas modificadas)
-        </button>
-        <button onclick="discardIngresoChanges()"
-          class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-5 py-2.5 rounded-xl transition text-sm">
-          ↺ Descartar
-        </button>
-        <span id="ingresoSaveStatus" class="text-xs text-gray-500"></span>
+      <!-- Paso 2: ¿Qué etapa / pestaña? -->
+      <div id="ingreso-p2" class="hidden">
+        <h2 class="text-lg font-bold text-gray-800 mb-1">📆 ¿Qué etapa escolar?</h2>
+        <p class="text-sm text-gray-400 mb-5">Elige el período que quieres editar.</p>
+        <div id="ingreso-etapa-cards" class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl"></div>
       </div>
 
-      <div id="ingresoEmpty" class="text-center py-16 text-gray-400">
-        <p class="text-4xl mb-3">📝</p>
-        <p class="text-sm">Selecciona una hoja y una pestaña, luego haz clic en "Cargar".</p>
+      <!-- Paso 3: Tabla editable -->
+      <div id="ingreso-p3" class="hidden space-y-3">
+        <div id="ingresoInfoChip" class="hidden">
+          <span id="ingresoInfoText" class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-full"></span>
+        </div>
+        <div id="ingresoTableContainer" class="hidden bg-white rounded-2xl shadow overflow-x-auto">
+          <table id="ingresoTable" class="w-full text-sm"></table>
+        </div>
+        <div id="ingresoActions" class="hidden flex items-center gap-3 flex-wrap">
+          <button id="ingresoSaveBtn" onclick="saveIngresoChanges()" disabled
+            class="bg-green-600 hover:bg-green-700 disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl transition text-sm">
+            💾 Guardar cambios (0 celdas)
+          </button>
+          <button onclick="discardIngresoChanges()"
+            class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-5 py-2.5 rounded-xl transition text-sm">
+            ↺ Descartar
+          </button>
+          <span id="ingresoSaveStatus" class="text-xs text-gray-500"></span>
+        </div>
+        <div id="ingresoEmpty" class="hidden text-center py-12 text-gray-400">
+          <p class="text-4xl mb-3">📭</p><p class="text-sm">No se encontraron datos en esta pestaña.</p>
+        </div>
+
+        <!-- Ocultos — compatibilidad con JS existente -->
+        <input type="hidden" id="ingresoSheetSelect" />
+        <input type="hidden" id="ingresoTabSelect" />
       </div>
-    </div>
+
+    </div><!-- /view-ingreso -->
 
     <!-- ── WHATSAPP ── -->
     <div id="view-whatsapp" class="view">

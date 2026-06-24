@@ -1870,47 +1870,91 @@ const ETAPA_LABEL = {
   'A3': 'Asistencias 3er Parcial', 'A4': 'Asistencias 4to Parcial',
 };
 
-function initPadresView() {
-  const sel = document.getElementById('padresSheetSelect');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— Selecciona una hoja —</option>';
-  const byInst = {};
-  for (const s of savedSheets) {
-    const inst = s.institution || 'Sin institución';
-    if (!byInst[inst]) byInst[inst] = [];
-    byInst[inst].push(s);
-  }
-  for (const [inst, sheets] of Object.entries(byInst)) {
-    const og = document.createElement('optgroup');
-    og.label = inst;
-    for (const s of sheets) {
-      const opt = document.createElement('option');
-      opt.value = s.id;
-      opt.textContent = `${s.materia} — ${s.tabName}`;
-      og.appendChild(opt);
-    }
-    sel.appendChild(og);
-  }
+// ── Padres Wizard ─────────────────────────────────────────────────────────────
+let _padresWizardStep = 0;
+let _padresWizardType = null; // 'calificaciones' | 'asistencias'
+
+function _padresShowStep(n) {
+  [0,1,2,3].forEach(i => {
+    const el = document.getElementById('padres-p' + i);
+    if (el) el.classList.toggle('hidden', i !== n);
+  });
+  const nav = document.getElementById('padres-nav');
+  if (nav) nav.classList.toggle('hidden', n === 0);
+  _padresWizardStep = n;
 }
 
-function onPadresSheetChange(id) {
-  _padresSheetId = id || null;
-  const sheet = savedSheets.find(s => s.id === id);
-  const infoEl = document.getElementById('padresSheetInfo');
-  if (sheet && infoEl) {
-    document.getElementById('padresMateriaLabel').textContent = sheet.materia || '—';
-    document.getElementById('padresDocenteLabel').textContent = sheet.docenteNombre || '—';
-    _padresMateria = sheet.materia || '';
-    _padresDocente = sheet.docenteNombre || '';
-    infoEl.classList.remove('hidden');
-  } else if (infoEl) {
-    infoEl.classList.add('hidden');
-  }
-  // Reset results
-  _padresData = null;
-  document.getElementById('padresResultSection')?.classList.add('hidden');
-  document.getElementById('padresEmpty')?.classList.remove('hidden');
+function initPadresView() {
+  _padresWizardStep = 0;
+  _padresWizardType = null;
+  _padresSheetId    = null;
+  _padresData       = null;
+  _padresShowStep(0);
 }
+
+function padresSelectTipo(tipo) {
+  _padresWizardType = tipo;
+  document.getElementById('padres-c0').textContent = tipo === 'calificaciones' ? '📊 Calificaciones' : '📅 Asistencias';
+  ['padres-c1','padres-c1-arr','padres-c2'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+
+  const container = document.getElementById('padres-hojas-cards');
+  if (!savedSheets.length) {
+    container.innerHTML = '<p class="text-sm text-gray-400 col-span-3">No hay hojas guardadas. Agrega una en la sección "Hojas".</p>';
+  } else {
+    container.innerHTML = savedSheets.map(s => `
+      <button onclick="padresSelectHoja('${s.id}')"
+        class="flex flex-col gap-2 p-4 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left">
+        <span class="text-2xl">📄</span>
+        <span class="font-semibold text-gray-800 text-sm leading-tight">${s.materia || 'Sin materia'}</span>
+        <span class="text-xs text-gray-400">${s.docenteNombre || s.institution || '—'}</span>
+      </button>`).join('');
+  }
+  _padresShowStep(1);
+}
+
+function padresSelectHoja(id) {
+  _padresSheetId = id;
+  const sheet = savedSheets.find(s => s.id === id);
+  _padresMateria = sheet?.materia || '';
+  _padresDocente = sheet?.docenteNombre || '';
+
+  const c1 = document.getElementById('padres-c1');
+  c1.textContent = sheet?.materia || id;
+  c1.classList.remove('hidden');
+  document.getElementById('padres-c1-arr')?.classList.remove('hidden');
+  document.getElementById('padres-c2')?.classList.add('hidden');
+
+  const isAtt = _padresWizardType === 'asistencias';
+  const periods = isAtt
+    ? [['A1','Asist.\n1er Parcial','📋'],['A2','Asist.\n2do Parcial','📋'],['A3','Asist.\n3er Parcial','📋'],['A4','Asist.\n4to Parcial','📋']]
+    : [['1P','1er Parcial','1️⃣'],['2P','2do Parcial','2️⃣'],['3P','3er Parcial','3️⃣'],['4P','4to Parcial','4️⃣'],['1Q','1er\nQuimestre','Q1'],['2Q','2do\nQuimestre','Q2'],['Anual','Anual','🏆']];
+
+  document.getElementById('padres-etapa-cards').innerHTML = periods.map(([tab, label, icon]) => `
+    <button onclick="padresSelectEtapa('${tab}')"
+      class="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-center">
+      <span class="text-2xl">${icon}</span>
+      <span class="font-semibold text-gray-800 text-sm whitespace-pre-line leading-tight">${label}</span>
+    </button>`).join('');
+  _padresShowStep(2);
+}
+
+async function padresSelectEtapa(tab) {
+  const hiddenTab = document.getElementById('padresTabSelect');
+  if (hiddenTab) hiddenTab.value = tab;
+  const c2 = document.getElementById('padres-c2');
+  c2.textContent = ETAPA_LABEL[tab] || tab;
+  c2.classList.remove('hidden');
+  _padresShowStep(3);
+  await loadParentGrades();
+}
+
+function padresBack() {
+  if (_padresWizardStep === 1) { initPadresView(); return; }
+  if (_padresWizardStep === 2) { padresSelectTipo(_padresWizardType); return; }
+  if (_padresWizardStep === 3) { padresSelectHoja(_padresSheetId); return; }
+}
+
+function onPadresSheetChange(id) { /* legacy — wizard sets _padresSheetId directly */ }
 
 async function loadParentGrades() {
   if (!_padresSheetId) { alert('Selecciona una hoja primero.'); return; }
@@ -2143,44 +2187,103 @@ async function sendParentReports() {
 // INGRESO DE CALIFICACIONES / ASISTENCIAS
 // ══════════════════════════════════════════════════════════════════════════════
 
-let _ingresoData    = null;  // response from /api/tab-data
-let _ingresoSheetId = null;
-let _ingresoChanges = {};    // { "sheetRow-col": { sheetRow, col, value } }
+let _ingresoData       = null;  // response from /api/tab-data
+let _ingresoSheetId    = null;
+let _ingresoCurrentUrl = null;  // full URL of selected sheet (for back navigation)
+let _ingresoChanges    = {};    // { "sheetRow-col": { sheetRow, col, value } }
+
+// ── Ingreso Wizard ────────────────────────────────────────────────────────────
+let _ingresoWizardStep = 0;
+let _ingresoWizardType = null; // 'calificaciones' | 'asistencias'
+
+function _ingresoShowStep(n) {
+  [0,1,2,3].forEach(i => {
+    const el = document.getElementById('ingreso-p' + i);
+    if (el) el.classList.toggle('hidden', i !== n);
+  });
+  const nav = document.getElementById('ingreso-nav');
+  if (nav) nav.classList.toggle('hidden', n === 0);
+  _ingresoWizardStep = n;
+}
 
 function initIngresoView() {
-  const sel = document.getElementById('ingresoSheetSelect');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">— Selecciona una hoja —</option>';
-  // Group by institution
-  const byInst = {};
-  for (const s of savedSheets) {
-    // Deduplicate by URL — pick the first tab entry per sheet URL
-    const inst = s.institution || 'Sin institución';
-    if (!byInst[inst]) byInst[inst] = [];
-    // Avoid duplicate URLs
-    if (!byInst[inst].find(e => e.url === s.url)) {
-      byInst[inst].push(s);
-    }
-  }
-  for (const [inst, sheets] of Object.entries(byInst)) {
-    const og = document.createElement('optgroup');
-    og.label = inst;
-    for (const s of sheets) {
-      const opt = document.createElement('option');
-      opt.value = s.url;   // store URL; we extract sheetId on load
-      opt.textContent = s.materia || s.institution || s.url.slice(0, 60);
-      og.appendChild(opt);
-    }
-    sel.appendChild(og);
-  }
-  // Update reauth banner
+  _ingresoWizardStep = 0;
+  _ingresoWizardType = null;
+  _ingresoSheetId    = null;
+  _ingresoCurrentUrl = null;
+  _ingresoShowStep(0);
   const banner = document.getElementById('ingresoReauthBanner');
   if (banner) banner.classList.toggle('hidden', _canWrite);
 }
 
-function onIngresoSheetChange(urlVal) {
-  _ingresoSheetId = urlVal ? extractSheetIdFromUrl(urlVal) : null;
+function ingresoSelectTipo(tipo) {
+  _ingresoWizardType = tipo;
+  document.getElementById('ingreso-c0').textContent = tipo === 'calificaciones' ? '📊 Calificaciones' : '📋 Asistencias';
+  ['ingreso-c1','ingreso-c1-arr','ingreso-c2'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+
+  const seen = new Set();
+  const unique = savedSheets.filter(s => { if (seen.has(s.url)) return false; seen.add(s.url); return true; });
+
+  const container = document.getElementById('ingreso-hojas-cards');
+  if (!unique.length) {
+    container.innerHTML = '<p class="text-sm text-gray-400 col-span-3">No hay hojas guardadas. Agrega una en "Hojas".</p>';
+  } else {
+    container.innerHTML = unique.map(s => {
+      const safeUrl = s.url.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      return `
+      <button onclick="ingresoSelectHoja('${safeUrl}')"
+        class="flex flex-col gap-2 p-4 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left">
+        <span class="text-2xl">📄</span>
+        <span class="font-semibold text-gray-800 text-sm leading-tight">${s.materia || 'Sin materia'}</span>
+        <span class="text-xs text-gray-400">${s.docenteNombre || s.institution || '—'}</span>
+      </button>`;
+    }).join('');
+  }
+  _ingresoShowStep(1);
 }
+
+function ingresoSelectHoja(url) {
+  _ingresoCurrentUrl = url;
+  _ingresoSheetId    = extractSheetIdFromUrl(url);
+  const sheet = savedSheets.find(s => s.url === url);
+
+  const c1 = document.getElementById('ingreso-c1');
+  c1.textContent = sheet?.materia || url.slice(0, 40);
+  c1.classList.remove('hidden');
+  document.getElementById('ingreso-c1-arr')?.classList.remove('hidden');
+  document.getElementById('ingreso-c2')?.classList.add('hidden');
+
+  const isAtt = _ingresoWizardType === 'asistencias';
+  const periods = isAtt
+    ? [['A1','Asist.\n1er Parcial','📋'],['A2','Asist.\n2do Parcial','📋'],['A3','Asist.\n3er Parcial','📋'],['A4','Asist.\n4to Parcial','📋']]
+    : [['1P','1er Parcial','1️⃣'],['2P','2do Parcial','2️⃣'],['3P','3er Parcial','3️⃣'],['4P','4to Parcial','4️⃣'],['1Q','1er\nQuimestre','Q1'],['2Q','2do\nQuimestre','Q2'],['Anual','Anual','🏆']];
+
+  document.getElementById('ingreso-etapa-cards').innerHTML = periods.map(([tab, label, icon]) => `
+    <button onclick="ingresoSelectEtapa('${tab}')"
+      class="flex flex-col items-center gap-2 p-4 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-center">
+      <span class="text-2xl">${icon}</span>
+      <span class="font-semibold text-gray-800 text-sm whitespace-pre-line leading-tight">${label}</span>
+    </button>`).join('');
+  _ingresoShowStep(2);
+}
+
+async function ingresoSelectEtapa(tab) {
+  const hiddenTab = document.getElementById('ingresoTabSelect');
+  if (hiddenTab) hiddenTab.value = tab;
+  const c2 = document.getElementById('ingreso-c2');
+  c2.textContent = ETAPA_LABEL[tab] || tab;
+  c2.classList.remove('hidden');
+  _ingresoShowStep(3);
+  await loadIngresoData();
+}
+
+function ingresoBack() {
+  if (_ingresoWizardStep === 1) { initIngresoView(); return; }
+  if (_ingresoWizardStep === 2) { ingresoSelectTipo(_ingresoWizardType); return; }
+  if (_ingresoWizardStep === 3) { ingresoSelectHoja(_ingresoCurrentUrl || ''); return; }
+}
+
+function onIngresoSheetChange(urlVal) { /* legacy — wizard sets _ingresoSheetId directly */ }
 
 function extractSheetIdFromUrl(url) {
   const m = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
