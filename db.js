@@ -302,6 +302,45 @@ async function getRecomendacionesEstudiante(sheetId, tab, studentNombre) {
   `, [sheetId, tab, studentNombre]);
 }
 
+async function getAllSesiones() {
+  const db = await getDb();
+  return _all(db, `
+    SELECT s.*, COUNT(r.id) AS num_recomendaciones
+    FROM clases_sesiones s
+    LEFT JOIN clase_recomendaciones r ON r.sesion_id = s.id
+    GROUP BY s.id
+    ORDER BY s.fecha DESC, s.created_at DESC
+  `);
+}
+
+async function getSesionById(id) {
+  const db = await getDb();
+  const rows = _all(db, `SELECT * FROM clases_sesiones WHERE id = ?`, [id]);
+  return rows[0] || null;
+}
+
+async function deleteSesionClase(id) {
+  const db = await getDb();
+  db.run(`DELETE FROM clases_sesiones WHERE id = ?`, [id]);
+  _persist();
+}
+
+async function updateSesionClase(id, { colName, tema, descripcion, fecha }) {
+  const db = await getDb();
+  db.run(`
+    UPDATE clases_sesiones SET
+      col_name    = COALESCE(?, col_name),
+      tema        = ?,
+      descripcion = ?,
+      fecha       = COALESCE(?, fecha),
+      updated_at  = datetime('now')
+    WHERE id = ?
+  `, [colName || null, tema || null, descripcion || null, fecha || null, id]);
+  _persist();
+  const rows = _all(db, `SELECT * FROM clases_sesiones WHERE id = ?`, [id]);
+  return rows[0];
+}
+
 async function getClaseDataCompleta(sheetId, tab) {
   const db = await getDb();
   const sesiones = _all(db, `SELECT * FROM clases_sesiones WHERE sheet_id=? AND tab=? ORDER BY col_index`, [sheetId, tab]);
@@ -323,6 +362,10 @@ module.exports = {
   getAllTutoresCursos,
   linkTutorCurso,
   upsertSesionClase,
+  getAllSesiones,
+  getSesionById,
+  deleteSesionClase,
+  updateSesionClase,
   getSesionClase,
   getSesionesTab,
   upsertRecomendacion,

@@ -1476,9 +1476,306 @@ function showSection(name) {
   const nav  = document.getElementById('nav-' + name);
   if (view) view.classList.add('active');
   if (nav)  nav.classList.add('active');
-  if (name === 'historial') loadHistory();
-  if (name === 'padres')   initPadresView();
-  if (name === 'ingreso')  initIngresoView();
+  if (name === 'historial')   loadHistory();
+  if (name === 'padres')     initPadresView();
+  if (name === 'ingreso')    initIngresoView();
+  if (name === 'actividades') initActividadesView();
+}
+
+// ── ACTIVIDADES DE CLASE — CRUD completo ──────────────────────────────────────
+
+const ETAPA_OPTS = [
+  { id: '1P', label: '1er Parcial' }, { id: '2P', label: '2do Parcial' },
+  { id: '3P', label: '3er Parcial' }, { id: '4P', label: '4to Parcial' },
+  { id: 'A1', label: 'Asistencia 1' },{ id: 'A2', label: 'Asistencia 2' },
+  { id: 'A3', label: 'Asistencia 3' },{ id: 'A4', label: 'Asistencia 4' },
+];
+
+let _actEditId   = null;   // null = nueva, número = editar
+let _actSheetUrl = null;
+let _actSheetId  = null;
+let _actSheetLabel = '';
+let _actTab      = null;
+let _actColIndex = null;
+let _actColName  = '';
+let _actCols     = [];     // [{ index, name }] — cols del tab cargadas
+let _actFiltroTab = null;  // filtro activo en la lista
+
+async function initActividadesView() {
+  await loadClases();
+}
+
+async function loadClases() {
+  const res = await fetch('/api/clase/all').then(r => r.json()).catch(() => ({ sesiones: [] }));
+  const sesiones = res.sesiones || [];
+
+  // Filtros por etapa
+  const tabs = [...new Set(sesiones.map(s => s.tab))];
+  const filtros = document.getElementById('act-filtros');
+  if (filtros) {
+    filtros.innerHTML = [
+      `<button onclick="filtrarActividades(null)" class="px-3 py-1 rounded-full text-xs font-semibold border transition ${!_actFiltroTab ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}">Todas</button>`,
+      ...tabs.map(t => {
+        const lbl = ETAPA_OPTS.find(e => e.id === t)?.label || t;
+        const act = _actFiltroTab === t;
+        return `<button onclick="filtrarActividades('${t}')" class="px-3 py-1 rounded-full text-xs font-semibold border transition ${act ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}">${lbl}</button>`;
+      }),
+    ].join('');
+  }
+
+  const filtered = _actFiltroTab ? sesiones.filter(s => s.tab === _actFiltroTab) : sesiones;
+  const lista   = document.getElementById('act-lista');
+  const empty   = document.getElementById('act-empty');
+
+  if (!filtered.length) {
+    lista.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  // Agrupar por (sheet_id + tab)
+  const groups = new Map();
+  for (const s of filtered) {
+    const key = `${s.sheet_id}::${s.tab}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+
+  lista.innerHTML = [...groups.entries()].map(([key, items]) => {
+    const first = items[0];
+    const sheetLabel = _sheetLabelById(first.sheet_id);
+    const tabLabel   = ETAPA_OPTS.find(e => e.id === first.tab)?.label || first.tab;
+    const cards = items.map(s => _actCardHtml(s)).join('');
+    return `
+    <div class="mb-5">
+      <div class="flex items-center gap-3 mb-2">
+        <span class="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-full">${sheetLabel}</span>
+        <span class="text-xs text-gray-500 font-medium">${tabLabel}</span>
+        <div class="flex-1 h-px bg-gray-100"></div>
+      </div>
+      <div class="space-y-2">${cards}</div>
+    </div>`;
+  }).join('');
+}
+
+function _sheetLabelById(sheetId) {
+  const s = savedSheets.find(sh => extractSheetIdFromUrl(sh.url) === sheetId);
+  return s ? (s.materia || s.docenteNombre || sheetId) : sheetId;
+}
+
+function _actCardHtml(s) {
+  const fecha = s.fecha ? `<span class="text-gray-400">${s.fecha}</span>` : '';
+  const recs  = s.num_recomendaciones > 0
+    ? `<span class="text-xs text-amber-600 font-medium">${s.num_recomendaciones} recomendación${s.num_recomendaciones>1?'es':''}</span>`
+    : `<span class="text-xs text-gray-300">Sin recomendaciones</span>`;
+  return `
+  <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex gap-3 items-start">
+    <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0 font-bold text-sm">${s.col_name?.replace(/[^0-9]/g,'') || '?'}</div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2 flex-wrap mb-0.5">
+        <span class="text-sm font-bold text-gray-800 truncate">${s.col_name || 'Sesión'}</span>
+        ${fecha}
+      </div>
+      <p class="text-sm text-gray-700 font-medium">${s.tema || '<span class="text-gray-300 italic">Sin tema</span>'}</p>
+      ${s.descripcion ? `<p class="text-xs text-gray-400 mt-0.5 line-clamp-2">${s.descripcion}</p>` : ''}
+      <div class="mt-1.5">${recs}</div>
+    </div>
+    <div class="flex flex-col gap-1.5 flex-shrink-0">
+      <button onclick="editarActividad(${s.id})"
+        class="w-8 h-8 rounded-xl bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-400 flex items-center justify-center text-sm transition" title="Editar">✏️</button>
+      <button onclick="eliminarActividad(${s.id},'${(s.tema||s.col_name||'').replace(/'/g,"&#39;")}')"
+        class="w-8 h-8 rounded-xl bg-gray-50 hover:bg-red-50 hover:text-red-500 text-gray-400 flex items-center justify-center text-sm transition" title="Eliminar">🗑️</button>
+    </div>
+  </div>`;
+}
+
+function filtrarActividades(tab) {
+  _actFiltroTab = tab;
+  loadClases();
+}
+
+// ── Modal: Nueva actividad ────────────────────────────────────────────────────
+
+function _actShowPaso(n) {
+  [1,2,3,4].forEach(i => document.getElementById('act-paso-'+i)?.classList.toggle('hidden', i !== n));
+}
+
+function abrirNuevaActividad() {
+  _actEditId    = null;
+  _actSheetUrl  = null; _actSheetId = null; _actSheetLabel = '';
+  _actTab       = null;
+  _actColIndex  = null; _actColName = '';
+  document.getElementById('modal-act-titulo').textContent = 'Nueva actividad';
+  document.getElementById('act-fecha').value        = new Date().toISOString().slice(0,10);
+  document.getElementById('act-tema').value         = '';
+  document.getElementById('act-descripcion').value  = '';
+  const st = document.getElementById('act-save-status'); if (st) st.classList.add('hidden');
+  _actShowPaso(1);
+  _actRenderHojas();
+  document.getElementById('modal-actividad').classList.remove('hidden');
+}
+
+function _actRenderHojas() {
+  const grid  = document.getElementById('act-hojas-grid');
+  const empty = document.getElementById('act-hojas-empty');
+  if (!savedSheets.length) { grid.innerHTML = ''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+  grid.innerHTML = savedSheets.map(s => {
+    const safe = s.url.replace(/'/g,"\\'");
+    return `<button onclick="actSeleccionarHoja('${safe}')"
+      class="flex items-center gap-3 p-3.5 bg-white border-2 border-gray-100 hover:border-indigo-400 rounded-2xl transition text-left">
+      <span class="text-2xl">📄</span>
+      <div class="min-w-0">
+        <p class="text-sm font-semibold text-gray-800 truncate">${s.materia || 'Sin materia'}</p>
+        <p class="text-xs text-gray-400 truncate">${s.docenteNombre || s.institution || '—'}</p>
+      </div>
+    </button>`;
+  }).join('');
+}
+
+function actSeleccionarHoja(url) {
+  _actSheetUrl = url;
+  _actSheetId  = extractSheetIdFromUrl(url);
+  const s = savedSheets.find(sh => sh.url === url);
+  _actSheetLabel = s ? (s.materia || s.docenteNombre || _actSheetId) : _actSheetId;
+  // Renderizar etapas
+  const grid = document.getElementById('act-etapas-grid');
+  grid.innerHTML = ETAPA_OPTS.map(e =>
+    `<button onclick="actSeleccionarEtapa('${e.id}','${e.label}')"
+      class="px-4 py-2.5 rounded-xl border-2 text-sm font-semibold bg-white text-gray-700 border-gray-200 hover:border-indigo-400 hover:text-indigo-700 transition">${e.label}</button>`
+  ).join('');
+  _actShowPaso(2);
+}
+
+async function actSeleccionarEtapa(tab, label) {
+  _actTab = tab;
+  const grid = document.getElementById('act-sesiones-grid');
+  grid.innerHTML = '<p class="text-xs text-gray-400 italic">Cargando columnas...</p>';
+  _actShowPaso(3);
+
+  // Cargar columnas desde el sheet real
+  try {
+    const res = await fetch(`/api/tab-data?sheetId=${encodeURIComponent(_actSheetId)}&tab=${encodeURIComponent(tab)}`).then(r => r.json());
+    if (res.success && res.editableCols?.length) {
+      _actCols = res.editableCols.filter(c => !c.isDate);
+      grid.innerHTML = _actCols.map(c =>
+        `<button onclick="actSeleccionarSesion(${c.index},'${c.name.replace(/'/g,"\\'")}','${label}')"
+          class="px-4 py-2.5 rounded-xl border-2 text-sm font-semibold bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 transition">${c.name}</button>`
+      ).join('') || '<p class="text-xs text-gray-400">No hay columnas editables en este período.</p>';
+    } else {
+      grid.innerHTML = '<p class="text-xs text-red-400">No se pudieron cargar las columnas.</p>';
+    }
+  } catch(e) {
+    grid.innerHTML = `<p class="text-xs text-red-400">${e.message}</p>`;
+  }
+}
+
+async function actSeleccionarSesion(colIndex, colName, etapaLabel) {
+  _actColIndex = colIndex;
+  _actColName  = colName;
+
+  // Resumen de selección
+  document.getElementById('act-resumen').innerHTML = [
+    `<span class="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full text-xs font-semibold">${_actSheetLabel}</span>`,
+    `<span class="px-2.5 py-1 bg-gray-100 text-gray-600 border border-gray-200 rounded-full text-xs font-semibold">${etapaLabel}</span>`,
+    `<span class="px-2.5 py-1 bg-green-50 text-green-700 border border-green-200 rounded-full text-xs font-semibold">${colName}</span>`,
+  ].join('');
+
+  // Pre-cargar datos existentes si hay sesión
+  const res = await fetch(`/api/clase/sesion?sheetId=${encodeURIComponent(_actSheetId)}&tab=${encodeURIComponent(_actTab)}&colIndex=${colIndex}`)
+    .then(r => r.json()).catch(() => ({}));
+  if (res.sesion) {
+    if (res.sesion.fecha) document.getElementById('act-fecha').value = res.sesion.fecha;
+    document.getElementById('act-tema').value        = res.sesion.tema        || '';
+    document.getElementById('act-descripcion').value = res.sesion.descripcion || '';
+    if (!_actEditId) _actEditId = res.sesion.id; // editar existente
+  }
+
+  _actShowPaso(4);
+}
+
+function actVolverPaso(n) {
+  if (n === 1) { _actSheetUrl = null; _actSheetId = null; _actTab = null; _actColIndex = null; }
+  if (n === 2) { _actTab = null; _actColIndex = null; }
+  if (n === 3) { _actColIndex = null; }
+  _actShowPaso(n);
+}
+
+async function guardarActividad() {
+  const tema        = document.getElementById('act-tema').value.trim();
+  const descripcion = document.getElementById('act-descripcion').value.trim();
+  const fecha       = document.getElementById('act-fecha').value;
+  const st          = document.getElementById('act-save-status');
+
+  let r;
+  try {
+    if (_actEditId) {
+      // Actualizar sesión existente
+      r = await fetch(`/api/clase/sesion/${_actEditId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ colName: _actColName, tema, descripcion, fecha }),
+      }).then(x => x.json());
+    } else {
+      // Crear nueva
+      r = await fetch('/api/clase/sesion', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetId: _actSheetId, tab: _actTab, colIndex: _actColIndex, colName: _actColName, tema, descripcion, fecha }),
+      }).then(x => x.json());
+    }
+    if (!r.success) throw new Error(r.error);
+
+    cerrarModalActividad();
+    await loadClases();
+  } catch(e) {
+    if (st) { st.textContent = 'Error: ' + e.message; st.className = 'text-xs font-medium text-red-500'; st.classList.remove('hidden'); }
+  }
+}
+
+async function editarActividad(id) {
+  const res = await fetch(`/api/clase/sesion?sheetId=_&tab=_&colIndex=0`).then(r => r.json()).catch(() => ({}));
+  // Usamos el endpoint all para buscar el id
+  const all = await fetch('/api/clase/all').then(r => r.json()).catch(() => ({}));
+  const s = (all.sesiones || []).find(x => x.id === id);
+  if (!s) return;
+
+  _actEditId    = id;
+  _actSheetId   = s.sheet_id;
+  _actSheetUrl  = savedSheets.find(sh => extractSheetIdFromUrl(sh.url) === s.sheet_id)?.url || s.sheet_id;
+  _actSheetLabel = _sheetLabelById(s.sheet_id);
+  _actTab       = s.tab;
+  _actColIndex  = s.col_index;
+  _actColName   = s.col_name;
+
+  document.getElementById('modal-act-titulo').textContent = 'Editar actividad';
+  document.getElementById('act-fecha').value        = s.fecha || '';
+  document.getElementById('act-tema').value         = s.tema  || '';
+  document.getElementById('act-descripcion').value  = s.descripcion || '';
+
+  // Resumen
+  const tabLabel = ETAPA_OPTS.find(e => e.id === s.tab)?.label || s.tab;
+  document.getElementById('act-resumen').innerHTML = [
+    `<span class="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full text-xs font-semibold">${_actSheetLabel}</span>`,
+    `<span class="px-2.5 py-1 bg-gray-100 text-gray-600 border border-gray-200 rounded-full text-xs font-semibold">${tabLabel}</span>`,
+    `<span class="px-2.5 py-1 bg-green-50 text-green-700 border border-green-200 rounded-full text-xs font-semibold">${s.col_name}</span>`,
+  ].join('');
+
+  document.getElementById('act-btn-volver-3')?.classList.add('hidden');
+  const st = document.getElementById('act-save-status'); if (st) st.classList.add('hidden');
+  _actShowPaso(4);
+  document.getElementById('modal-actividad').classList.remove('hidden');
+}
+
+async function eliminarActividad(id, tema) {
+  if (!confirm(`¿Eliminar la actividad "${tema}"?\nTambién se borrarán sus recomendaciones.`)) return;
+  const r = await fetch(`/api/clase/sesion/${id}`, { method: 'DELETE' }).then(x => x.json()).catch(() => ({}));
+  if (r.success) await loadClases();
+  else alert('Error al eliminar: ' + (r.error || 'Error desconocido'));
+}
+
+function cerrarModalActividad() {
+  document.getElementById('modal-actividad').classList.add('hidden');
+  _actEditId = null;
 }
 
 // ── Historial de envíos ────────────────────────────────────────────────────────
@@ -2794,7 +3091,7 @@ async function _loadClaseFieldData(colIndex, studentNombre, tab) {
   const sheetId = _ingresoSheetId;
   if (!sheetId || !tab) return;
 
-  // Cargar sesión compartida (tema/descripción)
+  // Cargar sesión compartida (tema/descripción) — creada en Actividades o aquí mismo
   const r = await fetch(`/api/clase/sesion?sheetId=${encodeURIComponent(sheetId)}&tab=${encodeURIComponent(tab)}&colIndex=${colIndex}`)
     .then(x => x.json()).catch(() => ({}));
   document.getElementById('clase-tema').value        = r.sesion?.tema        || '';

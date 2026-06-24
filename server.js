@@ -1950,6 +1950,30 @@ app.post('/api/tab-write', async (req, res) => {
   }
 });
 
+// ── API: clase — listar todas / eliminar / actualizar ─────────────────────────
+
+app.get('/api/clase/all', async (_req, res) => {
+  try {
+    const sesiones = await dbModule.getAllSesiones();
+    res.json({ success: true, sesiones });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+app.delete('/api/clase/sesion/:id', async (req, res) => {
+  try {
+    await dbModule.deleteSesionClase(parseInt(req.params.id));
+    res.json({ success: true });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
+app.put('/api/clase/sesion/:id', async (req, res) => {
+  try {
+    const { colName, tema, descripcion, fecha } = req.body;
+    const sesion = await dbModule.updateSesionClase(parseInt(req.params.id), { colName, tema, descripcion, fecha });
+    res.json({ success: true, sesion });
+  } catch(e) { res.json({ success: false, error: e.message }); }
+});
+
 // ── API: clase pedagógica — sesión (tema/descripción compartida) ──────────────
 
 app.post('/api/clase/sesion', async (req, res) => {
