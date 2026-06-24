@@ -2548,7 +2548,7 @@ function ingresoSelectHoja(url) {
   c1.textContent = sheet?.materia || url.slice(0, 40);
   c1.classList.remove('hidden');
   document.getElementById('ingreso-c1-arr')?.classList.remove('hidden');
-  document.getElementById('ingreso-c2')?.classList.add('hidden');
+  ['ingreso-c2','ingreso-c2-arr','ingreso-c2b','ingreso-c2b-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
 
   const isAtt = _ingresoWizardType === 'asistencias';
   const periods = isAtt
@@ -2570,6 +2570,8 @@ async function ingresoSelectEtapa(tab) {
   const c2 = document.getElementById('ingreso-c2');
   c2.textContent = ETAPA_LABEL[tab] || tab;
   c2.classList.remove('hidden');
+  document.getElementById('ingreso-c2-arr')?.classList.remove('hidden');
+  ['ingreso-c2b','ingreso-c2b-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
   _ingresoShowStep(3);
   await loadIngresoData();
 }
@@ -2578,35 +2580,193 @@ function ingresoBack() {
   if (_ingresoWizardStep === 1) { initIngresoView(); return; }
   if (_ingresoWizardStep === 2) { ingresoSelectTipo(_ingresoWizardType); return; }
   if (_ingresoWizardStep === 3) { ingresoSelectHoja(_ingresoCurrentUrl || ''); return; }
-  if (_ingresoWizardStep === 4) { _ingresoShowStep(3); _updateIngresoCrumb3(); return; }
+  if (_ingresoWizardStep === 4) {
+    _ingresoShowStep(3);
+    if (_ingresoCurrentColIdx !== null) {
+      // Volver a la vista de cursos de esa actividad
+      _showIngresoCursosView(_ingresoData);
+    } else {
+      _showIngresoActividadesView(_ingresoData);
+    }
+    return;
+  }
 }
 
 function onIngresoSheetChange(urlVal) { /* legacy — wizard sets _ingresoSheetId directly */ }
 
-// ── Wizard paso 3: cursos → estudiantes ──────────────────────────────────────
+// ── Wizard paso 3: actividades → cursos → estudiantes ────────────────────────
 let _ingresoCurrentStudentIdx = -1;
 let _ingresoStudentFilter     = '';
-let _ingresoCurrentCurso      = null; // curso seleccionado, null = todos
+let _ingresoCurrentCurso      = null;
+let _ingresoCurrentColIdx     = null;  // columna seleccionada (actividad activa)
+let _ingresoCurrentColName    = '';
+
+function _updateIngresoCrumb(opts = {}) {
+  const { hoja, etapa, actividad, estudiante } = opts;
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (val) { el.textContent = val; el.classList.remove('hidden'); }
+    else el.classList.add('hidden');
+  };
+  if (hoja      !== undefined) set('ingreso-c1', hoja);
+  if (etapa     !== undefined) set('ingreso-c2', etapa);
+  if (actividad !== undefined) {
+    set('ingreso-c2b', actividad);
+    document.getElementById('ingreso-c2b-arr')?.classList.toggle('hidden', !actividad);
+  }
+  if (estudiante !== undefined) {
+    const c3 = document.getElementById('ingreso-c3');
+    const c3a = document.getElementById('ingreso-c3-arr');
+    if (estudiante) { if(c3) c3.textContent = estudiante; }
+    else { c3?.remove(); c3a?.remove(); }
+  }
+}
 
 function _updateIngresoCrumb3() {
   const tab = document.getElementById('ingresoTabSelect')?.value || '';
-  const c2  = document.getElementById('ingreso-c2');
-  c2.textContent = ETAPA_LABEL[tab] || tab;
-  c2.classList.remove('hidden');
+  document.getElementById('ingreso-c2')?.classList.remove('hidden');
+  document.getElementById('ingreso-c2b')?.classList.add('hidden');
+  document.getElementById('ingreso-c2b-arr')?.classList.add('hidden');
   const c3  = document.getElementById('ingreso-c3');
   const c3a = document.getElementById('ingreso-c3-arr');
-  if (c3)  c3.remove();
+  if (c3) c3.remove();
   if (c3a) c3a.remove();
 }
 
 function renderIngresoStudentList(data) {
-  console.log('[ingreso] data recibido:', { students: data?.students?.length, courses: data?.courses, type: data?.type });
   _ingresoStudentFilter = '';
+  _ingresoCurrentColIdx = null;
+  _ingresoCurrentColName = '';
   const inp = document.getElementById('ingreso-search');
   if (inp) inp.value = '';
+  _showIngresoActividadesView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
+}
 
-  // Siempre mostrar vista de cursos (con "Todos" si no hay cursos detectados)
-  _showIngresoCursosView(data || { students: [], courses: [], editableCols: [], type: 'grade' });
+// ── Sub-vista 0: lista de actividades (carpetas de clase) ─────────────────────
+
+async function _showIngresoActividadesView(data) {
+  document.getElementById('ingreso-p3-actividades').classList.remove('hidden');
+  document.getElementById('ingreso-p3-cursos').classList.add('hidden');
+  document.getElementById('ingreso-p3-students').classList.add('hidden');
+  document.getElementById('ingreso-act-form').classList.add('hidden');
+
+  _updateIngresoCrumb3();
+
+  const editableCols = (data?.editableCols || []).filter(c => !c.isDate);
+  const lista   = document.getElementById('ingreso-act-lista');
+  const loading = document.getElementById('ingreso-act-loading');
+  const empty   = document.getElementById('ingreso-act-empty');
+
+  if (!editableCols.length) {
+    lista.innerHTML = '';
+    empty.classList.remove('hidden');
+    loading.classList.add('hidden');
+    // Populate col selector anyway
+    const sel = document.getElementById('ingreso-act-col-sel');
+    if (sel) sel.innerHTML = '<option>—</option>';
+    return;
+  }
+  empty.classList.add('hidden');
+  loading.classList.remove('hidden');
+  lista.innerHTML = '';
+
+  // Poblar selector de columnas en form de nueva actividad
+  const sel = document.getElementById('ingreso-act-col-sel');
+  if (sel) sel.innerHTML = editableCols.map(c => `<option value="${c.index}">${c.name}</option>`).join('');
+
+  // Cargar sesiones desde DB
+  const tab = document.getElementById('ingresoTabSelect')?.value || '';
+  let sesionMap = {};
+  try {
+    const r = await fetch(`/api/clase/sesiones?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(x => x.json());
+    for (const s of (r.sesiones || [])) sesionMap[s.col_index] = s;
+  } catch(_) {}
+
+  loading.classList.add('hidden');
+
+  lista.innerHTML = editableCols.map((col, i) => {
+    const s = sesionMap[col.index];
+    const gradeCount = (data.students || []).filter(st => {
+      const v = st.values?.[col.index];
+      return v !== '' && v !== null && v !== undefined;
+    }).length;
+    const total   = data.students?.length || 0;
+    const pct     = total > 0 ? Math.round(gradeCount/total*100) : 0;
+    const allDone = gradeCount === total && total > 0;
+    const anyDone = gradeCount > 0;
+    const progressColor = allDone ? 'text-green-600' : anyDone ? 'text-amber-600' : 'text-gray-300';
+    const borderClass   = allDone ? 'border-green-200 hover:border-green-400' : 'border-gray-100 hover:border-indigo-300';
+    const numBg         = CURSO_COLORS[i % CURSO_COLORS.length];
+    const metaDate = s?.fecha ? `📅 ${s.fecha}` : '';
+    const metaTema = s?.tema  ? `· ${s.tema}` : s ? '' : '<span class="italic text-gray-300">Sin actividad — clic para crear</span>';
+    const metaLine = [metaDate, metaTema].filter(Boolean).join(' ') || metaTema;
+
+    return `
+    <button onclick="ingresoSelectActividad(${col.index},'${col.name.replace(/'/g,"\\'")}','${(s?.tema||col.name).replace(/'/g,"\\'")}')"
+      class="w-full flex items-center gap-4 p-4 bg-white rounded-2xl shadow-sm border-2 ${borderClass} hover:shadow-md transition text-left group">
+      <div class="w-11 h-11 rounded-2xl flex items-center justify-center font-bold text-base flex-shrink-0 ${numBg}">${i+1}</div>
+      <div class="flex-1 min-w-0">
+        <p class="font-bold text-gray-800 text-sm">${col.name}</p>
+        <p class="text-xs text-gray-400 truncate mt-0.5">${metaLine}</p>
+        ${total > 0 ? `<div class="flex items-center gap-2 mt-1.5">
+          <div class="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all ${allDone?'bg-green-400':anyDone?'bg-amber-400':'bg-gray-200'}" style="width:${pct}%"></div>
+          </div>
+          <span class="text-xs font-semibold ${progressColor}">${gradeCount}/${total}</span>
+        </div>` : ''}
+      </div>
+      <span class="text-gray-200 group-hover:text-indigo-400 text-2xl transition flex-shrink-0">›</span>
+    </button>`;
+  }).join('');
+}
+
+function ingresoSelectActividad(colIdx, colName, actLabel) {
+  _ingresoCurrentColIdx  = colIdx;
+  _ingresoCurrentColName = colName;
+  // Actualizar breadcrumb con la actividad
+  _updateIngresoCrumb({ actividad: actLabel || colName });
+  document.getElementById('ingreso-c2b-arr').classList.remove('hidden');
+  // Mostrar cursos
+  _showIngresoCursosView(_ingresoData);
+}
+
+function ingresoVolverActividades() {
+  _ingresoCurrentColIdx  = null;
+  _ingresoCurrentColName = '';
+  _showIngresoActividadesView(_ingresoData);
+}
+
+function ingresoNuevaActividad() {
+  const form = document.getElementById('ingreso-act-form');
+  if (!form) return;
+  form.classList.toggle('hidden');
+  if (!form.classList.contains('hidden')) {
+    document.getElementById('ingreso-act-fecha').value = new Date().toISOString().slice(0,10);
+    document.getElementById('ingreso-act-tema').value  = '';
+    document.getElementById('ingreso-act-desc').value  = '';
+  }
+}
+
+async function ingresoGuardarNuevaActividad() {
+  const colIdx   = parseInt(document.getElementById('ingreso-act-col-sel')?.value);
+  const col      = (_ingresoData?.editableCols || []).find(c => c.index === colIdx);
+  const tema     = document.getElementById('ingreso-act-tema')?.value.trim();
+  const desc     = document.getElementById('ingreso-act-desc')?.value.trim();
+  const fecha    = document.getElementById('ingreso-act-fecha')?.value;
+  const tab      = document.getElementById('ingresoTabSelect')?.value;
+  if (!_ingresoSheetId || !tab || !col) return;
+
+  await fetch('/api/clase/sesion', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sheetId: _ingresoSheetId, tab, colIndex: colIdx, colName: col.name, tema: tema||null, descripcion: desc||null, fecha: fecha||null }),
+  }).then(x => x.json()).catch(() => ({}));
+
+  ingresoSelectActividad(colIdx, col.name, tema || col.name);
+}
+
+function ingresoCancelarNuevaActividad() {
+  document.getElementById('ingreso-act-form')?.classList.add('hidden');
 }
 
 // ── Paleta de colores para las burbujas de curso ─────────────────────────────
@@ -2671,6 +2831,7 @@ function ingresoSelectCurso(curso) {
 }
 
 function ingresoVolverCursos() {
+  // "← cambiar curso" dentro de la lista de estudiantes → vuelve a cursos
   _showIngresoCursosView(_ingresoData);
 }
 
@@ -3079,12 +3240,16 @@ async function _loadClasePanelForStudent(student, data, tab) {
   if (!sel) return;
   sel.innerHTML = gradeCols.map(c => `<option value="${c.index}">${c.name}</option>`).join('');
 
+  // Pre-seleccionar la columna activa (actividad en que estamos)
+  const activeCol = _ingresoCurrentColIdx ?? gradeCols[0]?.index;
+  if (activeCol != null) sel.value = activeCol;
+
   // Etiqueta de recomendación
   const recLabel = document.getElementById('clase-rec-label');
   if (recLabel) recLabel.textContent = `Para: ${student.nombre}`;
 
-  // Cargar datos del servidor para la primera columna
-  if (gradeCols.length) await _loadClaseFieldData(gradeCols[0].index, student.nombre, tab);
+  // Cargar datos del servidor para la columna activa
+  if (gradeCols.length) await _loadClaseFieldData(activeCol ?? gradeCols[0].index, student.nombre, tab);
 }
 
 async function _loadClaseFieldData(colIndex, studentNombre, tab) {

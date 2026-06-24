@@ -565,9 +565,12 @@
         </button>
         <div class="flex items-center gap-1.5 text-xs text-gray-400 flex-wrap">
           <span id="ingreso-c0"></span>
-          <span id="ingreso-c1" class="hidden font-medium text-indigo-600"></span>
           <span id="ingreso-c1-arr" class="hidden">›</span>
+          <span id="ingreso-c1" class="hidden font-medium text-indigo-600"></span>
+          <span id="ingreso-c2-arr" class="hidden">›</span>
           <span id="ingreso-c2" class="hidden font-medium text-indigo-600"></span>
+          <span id="ingreso-c2b-arr" class="hidden">›</span>
+          <span id="ingreso-c2b" class="hidden font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded-full border border-green-200"></span>
         </div>
       </div>
 
@@ -605,19 +608,72 @@
         <div id="ingreso-etapa-cards" class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl"></div>
       </div>
 
-      <!-- Paso 3: Tabla editable -->
-      <!-- Paso 3: Cursos → Estudiantes -->
+      <!-- Paso 3: Actividades → Cursos → Estudiantes -->
       <div id="ingreso-p3" class="hidden">
 
-        <!-- Sub-vista A: selección de curso -->
-        <div id="ingreso-p3-cursos">
+        <!-- Sub-vista 0: Actividades/Carpetas (pantalla por defecto al entrar al paso 3) -->
+        <div id="ingreso-p3-actividades">
+          <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <h2 class="text-lg font-bold text-gray-800">📂 Actividades del período</h2>
+              <p class="text-sm text-gray-400" id="ingreso-act-subtitle">Elige una clase para ingresar notas</p>
+            </div>
+            <button onclick="ingresoNuevaActividad()"
+              class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-xl transition flex items-center gap-1.5">
+              <span class="text-base">+</span> Nueva clase
+            </button>
+          </div>
+
+          <!-- Cards de actividades (una por columna de nota) -->
+          <div id="ingreso-act-lista" class="space-y-2 mb-4"></div>
+          <p id="ingreso-act-loading" class="hidden text-center py-8 text-sm text-gray-300">Cargando actividades…</p>
+          <div id="ingreso-act-empty" class="hidden text-center py-14">
+            <p class="text-4xl mb-2">📋</p>
+            <p class="text-sm text-gray-400 font-medium">No hay columnas de notas en este período.</p>
+          </div>
+
+          <!-- Formulario rápido: nueva actividad inline -->
+          <div id="ingreso-act-form" class="hidden mb-4 p-4 bg-indigo-50 border border-indigo-200 rounded-2xl space-y-3">
+            <p class="text-sm font-bold text-indigo-800">📝 Nueva actividad de clase</p>
+            <div>
+              <label class="text-xs text-gray-500 font-medium">Sesión de clase</label>
+              <select id="ingreso-act-col-sel" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"></select>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 font-medium">Fecha</label>
+                <input id="ingreso-act-fecha" type="date" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 font-medium">Tema</label>
+                <input id="ingreso-act-tema" type="text" placeholder="Ej: Escalas mayores…" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 font-medium">Descripción de la clase</label>
+              <textarea id="ingreso-act-desc" rows="2" placeholder="¿Qué se trabajó en esta sesión?" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="ingresoGuardarNuevaActividad()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm transition">
+                Guardar y entrar →
+              </button>
+              <button onclick="ingresoCancelarNuevaActividad()" class="bg-white text-gray-500 border border-gray-200 px-4 py-2 rounded-xl text-sm hover:bg-gray-50 transition">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-vista A: selección de curso (ahora oculta por defecto) -->
+        <div id="ingreso-p3-cursos" class="hidden">
+          <div class="flex items-center gap-2 mb-4">
+            <button onclick="ingresoVolverActividades()" class="text-xs text-gray-400 hover:text-gray-700 flex items-center gap-1">
+              ← actividades
+            </button>
+          </div>
           <h2 class="text-lg font-bold text-gray-800 mb-1">🏫 ¿De qué curso?</h2>
           <p class="text-sm text-gray-400 mb-4">Elige un curso para ver sus estudiantes.</p>
           <div id="ingreso-cursos-grid" class="flex flex-wrap gap-3 mb-4"></div>
-          <button onclick="ingresoSelectCurso(null)"
-            class="text-xs text-indigo-500 hover:text-indigo-700 underline">
-            Ver todos los estudiantes
-          </button>
         </div>
 
         <!-- Sub-vista B: lista de estudiantes (filtrada por curso) -->
