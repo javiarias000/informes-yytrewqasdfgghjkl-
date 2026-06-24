@@ -1736,14 +1736,24 @@ app.get('/api/tab-data', async (req, res) => {
         const r      = rows[i];
         const noCell = String(r[0] || '').trim();
         const ape    = String(r[apeIdx] || '').trim();
-        if (!ape || /total|promedio/i.test(ape)) continue;
 
-        // Course header: Nº column empty or non-integer positive
-        const noNum = parseInt(noCell);
-        if (!noCell || isNaN(noNum) || noNum <= 0) {
-          currentCurso = ape;
+        // Skip totals / promedios
+        if (/total|promedio/i.test(ape) || /total|promedio/i.test(noCell)) continue;
+
+        // Determine if this is a student row: Nº must be a positive integer
+        const noNum    = parseInt(noCell);
+        const isStudent = noCell !== '' && !isNaN(noNum) && noNum > 0;
+
+        if (!isStudent) {
+          // Course / section header row — grab the name from any non-empty cell
+          // Format A: r[0]="" , r[apeIdx]="4to de Básica A"
+          // Format B: r[0]="4to de Básica A", r[apeIdx]=""
+          const candidate = ape || noCell;
+          if (candidate && candidate.length > 1) currentCurso = candidate;
           continue;
         }
+
+        if (!ape) continue; // student row with no name → skip
 
         const nom    = String(r[nomIdx] || '').trim();
         const values = {};
@@ -1785,13 +1795,18 @@ app.get('/api/tab-data', async (req, res) => {
       const r      = rows[i];
       const noCell = String(r[0] || '').trim();
       const ape    = String(r[1] || '').trim();
-      if (!ape || /total|promedio/i.test(ape)) continue;
 
-      const noNum = parseInt(noCell);
-      if (!noCell || isNaN(noNum) || noNum <= 0) {
-        attCurso = ape;
+      if (/total|promedio/i.test(ape) || /total|promedio/i.test(noCell)) continue;
+
+      const noNum     = parseInt(noCell);
+      const isStudent = noCell !== '' && !isNaN(noNum) && noNum > 0;
+
+      if (!isStudent) {
+        const candidate = ape || noCell;
+        if (candidate && candidate.length > 1) attCurso = candidate;
         continue;
       }
+      if (!ape) continue;
 
       const nom    = String(r[2] || '').trim();
       const values = {};

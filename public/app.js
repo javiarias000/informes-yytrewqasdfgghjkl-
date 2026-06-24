@@ -2303,21 +2303,29 @@ function _updateIngresoCrumb3() {
 }
 
 function renderIngresoStudentList(data) {
-  if (!data?.students?.length) {
-    _showIngresoCursosView(data);
-    return;
-  }
   _ingresoStudentFilter = '';
   const inp = document.getElementById('ingreso-search');
   if (inp) inp.value = '';
 
-  if (data.courses?.length > 1) {
+  if (data?.courses?.length >= 1) {
     _showIngresoCursosView(data);
   } else {
-    _ingresoCurrentCurso = data.courses?.[0] || null;
-    _showIngresoStudentsView(data, null);
+    _ingresoCurrentCurso = null;
+    _showIngresoStudentsView(data || { students: [], editableCols: [], type: 'grade' }, null);
   }
 }
+
+// ── Paleta de colores para las burbujas de curso ─────────────────────────────
+const CURSO_COLORS = [
+  'bg-blue-100 text-blue-800 border-blue-200 hover:bg-blue-200',
+  'bg-indigo-100 text-indigo-800 border-indigo-200 hover:bg-indigo-200',
+  'bg-violet-100 text-violet-800 border-violet-200 hover:bg-violet-200',
+  'bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-200',
+  'bg-teal-100 text-teal-800 border-teal-200 hover:bg-teal-200',
+  'bg-amber-100 text-amber-800 border-amber-200 hover:bg-amber-200',
+  'bg-rose-100 text-rose-800 border-rose-200 hover:bg-rose-200',
+  'bg-sky-100 text-sky-800 border-sky-200 hover:bg-sky-200',
+];
 
 // ── Sub-vista A: cursos ──────────────────────────────────────────────────────
 function _showIngresoCursosView(data) {
@@ -2328,16 +2336,22 @@ function _showIngresoCursosView(data) {
   const grid    = document.getElementById('ingreso-cursos-grid');
 
   if (!courses.length) {
-    grid.innerHTML = '<p class="text-sm text-gray-400">No se detectaron cursos. <button onclick="ingresoSelectCurso(null)" class="text-indigo-500 underline">Ver todos</button></p>';
+    grid.innerHTML = `<p class="text-sm text-gray-400 col-span-full">No se detectaron cursos en esta hoja.
+      <button onclick="ingresoSelectCurso(null)" class="text-indigo-500 underline ml-1">Ver todos los estudiantes</button></p>`;
     return;
   }
 
-  grid.innerHTML = courses.map(c => `
-    <button onclick="ingresoSelectCurso('${c.replace(/'/g,"\\'")}')"
-      class="flex items-center gap-2 px-4 py-2.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-sm font-medium text-gray-700">
-      🏫 ${c}
-      <span class="ml-1 text-xs text-gray-400">${data.students.filter(s=>s.curso===c).length}</span>
-    </button>`).join('');
+  grid.innerHTML = courses.map((c, i) => {
+    const n     = data.students.filter(s => s.curso === c).length;
+    const color = CURSO_COLORS[i % CURSO_COLORS.length];
+    const safe  = c.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `
+    <button onclick="ingresoSelectCurso('${safe}')"
+      class="flex flex-col items-start gap-1 px-5 py-3.5 rounded-2xl border-2 shadow-sm transition font-medium ${color}">
+      <span class="text-base font-bold">${c}</span>
+      <span class="text-xs opacity-70">${n} estudiante${n!==1?'s':''}</span>
+    </button>`;
+  }).join('');
 }
 
 function ingresoSelectCurso(curso) {
