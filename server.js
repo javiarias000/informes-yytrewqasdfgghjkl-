@@ -1770,48 +1770,57 @@ app.get('/api/tab-data', async (req, res) => {
 
       let courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
 
-      // Si no se detectaron cursos desde cabeceras, cruzar con la pestaña Contacto
-      if (!courses.length) {
-        try {
-          const contactoTabName = allTabs.find(t =>
-            t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('contacto')
-          );
-          if (contactoTabName) {
-            const cRows = await readTab(sheets, sheetId, contactoTabName);
-            if (cRows.length >= 2) {
-              const h = cRows[0].map(c => (c||'').toLowerCase().trim());
-              const cApe   = h.findIndex(c => c.includes('apellido'));
-              const cNom   = h.findIndex(c => c==='nombres'||(c.includes('nombre')&&!c.includes('apellido')));
-              const cCurso = h.findIndex(c => c.includes('curso')||c.includes('grado')||c.includes('paralelo'));
-              const m = {};
-              for (let ci = 1; ci < cRows.length; ci++) {
-                const cr  = cRows[ci];
-                const ape = (cr[cApe]  || '').trim();
-                const nom = (cr[cNom]  || '').trim();
-                const cur = cCurso >= 0 ? (cr[cCurso] || '').trim() : '';
-                const full = [ape, nom].filter(Boolean).join(' ');
-                if (full && cur) m[normName(full)] = cur;
-              }
-              for (const s of students) {
-                const found = m[normName(s.nombre)];
-                if (found) s.curso = found;
-              }
-              courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
-              console.log(`[tab-data] Contacto lookup: ${courses.length} cursos`);
-            }
-          }
-        } catch(e) {
-          console.log('[tab-data] Contacto lookup failed:', e.message);
-        }
-      }
+      // Cruzar siempre con Contacto para obtener fila exacta + curso si falta
+      let contactoTabRet = null;
+      let contactoCursoColRet = null;
+      try {
+        const contactoTabName = allTabs.find(t =>
+          t.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes('contacto')
+        );
+        if (contactoTabName) {
+          const cRows = await readTab(sheets, sheetId, contactoTabName);
+          if (cRows.length >= 2) {
+            const h      = cRows[0].map(c => (c||'').toLowerCase().trim());
+            const cApe   = h.findIndex(c => c.includes('apellido'));
+            const cNom   = h.findIndex(c => c==='nombres'||(c.includes('nombre')&&!c.includes('apellido')));
+            const cCurso = h.findIndex(c => c.includes('curso')||c.includes('grado')||c.includes('paralelo'));
+            contactoTabRet     = contactoTabName;
+            contactoCursoColRet = cCurso;
 
-      console.log(`[tab-data] tab=${tab} students=${students.length} courses=${JSON.stringify(courses)}`);
+            // nombre → { sheetRow, curso }
+            const m = {};
+            for (let ci = 1; ci < cRows.length; ci++) {
+              const cr   = cRows[ci];
+              const ape  = (cr[cApe]  || '').trim();
+              const nom  = (cr[cNom]  || '').trim();
+              const cur  = cCurso >= 0 ? (cr[cCurso] || '').trim() : '';
+              const full = [ape, nom].filter(Boolean).join(' ');
+              if (full) m[normName(full)] = { sheetRow: ci + 1, curso: cur };
+            }
+            for (const s of students) {
+              const entry = m[normName(s.nombre)];
+              if (entry) {
+                s.contactoSheetRow = entry.sheetRow;
+                if (!s.curso && entry.curso) s.curso = entry.curso;
+              }
+            }
+            if (!courses.length) {
+              courses = [...new Set(students.map(s => s.curso).filter(Boolean))];
+            }
+            console.log(`[tab-data] Contacto: ${courses.length} cursos, ${students.filter(s=>s.contactoSheetRow).length}/${students.length} mapeados`);
+          }
+        }
+      } catch(e) {
+        console.log('[tab-data] Contacto lookup failed:', e.message);
+      }
 
       return res.json({
         success: true, tab, label: tabCfg.label || labelMap[tab] || tab,
         type: 'grade', editableCols, readonlyCols,
         nameCols: { ape: apeIdx, nom: nomIdx },
         students, courses,
+        contactoTab: contactoTabRet,
+        contactoCursoCol: contactoCursoColRet,
       });
     }
 

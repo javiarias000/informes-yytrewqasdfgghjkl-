@@ -2344,10 +2344,7 @@ function _showIngresoCursosView(data) {
       <span class="text-xs opacity-70">${total} estudiante${total!==1?'s':''} en total</span>
     </button>`;
 
-  if (!courses.length) {
-    grid.innerHTML = todosBtn;
-    return;
-  }
+  const sinCursoCount = data.students.filter(s => !s.curso).length;
 
   const cursoBtns = courses.map((c, i) => {
     const n     = data.students.filter(s => s.curso === c).length;
@@ -2361,7 +2358,14 @@ function _showIngresoCursosView(data) {
     </button>`;
   }).join('');
 
-  grid.innerHTML = todosBtn + cursoBtns;
+  const sinCursoBtn = sinCursoCount ? `
+    <button onclick="ingresoSelectCurso('__NONE__')"
+      class="flex flex-col items-start gap-1 px-5 py-3.5 rounded-2xl border-2 border-dashed border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100 shadow-sm transition font-medium">
+      <span class="text-base font-bold">⚠️ Sin curso asignado</span>
+      <span class="text-xs opacity-70">${sinCursoCount} estudiante${sinCursoCount!==1?'s':''} — clic para asignar</span>
+    </button>` : '';
+
+  grid.innerHTML = todosBtn + cursoBtns + sinCursoBtn;
 }
 
 function ingresoSelectCurso(curso) {
@@ -2397,8 +2401,12 @@ function _showIngresoStudentsView(data, curso) {
 // Genera el HTML de una tarjeta de estudiante
 function _studentCardHtml(s, data, isAtt) {
   const origIdx = data.students.indexOf(s);
+  const noCurso = !s.curso;
+
   let badge = '';
-  if (!isAtt && data.editableCols.length) {
+  if (noCurso) {
+    badge = `<span class="ml-auto text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">+ Asignar</span>`;
+  } else if (!isAtt && data.editableCols.length) {
     const vals  = data.editableCols.map(c => parseFloat(s.values[c.index]) || 0).filter(v => v > 0);
     if (vals.length) {
       const avg   = (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2);
@@ -2412,10 +2420,15 @@ function _studentCardHtml(s, data, isAtt) {
     const p  = dc.reduce((n,c) => n + (String(s.values[c.index]).toUpperCase()==='A'?1:0), 0);
     if (dc.length) badge = `<span class="ml-auto text-xs text-gray-400">${p}/${dc.length}</span>`;
   }
+
+  const borderCls  = noCurso ? 'border-orange-200 bg-orange-50 hover:border-orange-400' : 'border-transparent hover:border-indigo-400';
+  const avatarCls  = noCurso ? 'bg-orange-100 text-orange-700' : 'bg-indigo-100 text-indigo-700';
+  const clickFn    = noCurso ? `abrirAsignacionCurso(${origIdx})` : `ingresoSeleccionarEstudiante(${origIdx})`;
+
   return `
-  <button onclick="ingresoSeleccionarEstudiante(${origIdx})"
-    class="flex items-center gap-3 p-3.5 bg-white rounded-2xl shadow border-2 border-transparent hover:border-indigo-400 hover:shadow-md transition text-left w-full">
-    <span class="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold flex items-center justify-center flex-shrink-0">
+  <button onclick="${clickFn}"
+    class="flex items-center gap-3 p-3.5 bg-white rounded-2xl shadow border-2 ${borderCls} hover:shadow-md transition text-left w-full">
+    <span class="w-8 h-8 rounded-full ${avatarCls} text-sm font-bold flex items-center justify-center flex-shrink-0">
       ${(s.nombre.trim()[0]||'?').toUpperCase()}
     </span>
     <span class="flex-1 font-medium text-gray-800 text-sm leading-tight">${s.nombre}</span>
@@ -2430,9 +2443,11 @@ function _renderStudentCards(data, curso) {
   const isAtt = data.type === 'attendance';
   const q     = _ingresoStudentFilter.toLowerCase();
 
-  let filtered = curso
-    ? data.students.filter(s => s.curso === curso)
-    : data.students;
+  let filtered = curso === '__NONE__'
+    ? data.students.filter(s => !s.curso)
+    : curso
+      ? data.students.filter(s => s.curso === curso)
+      : data.students;
   if (q) filtered = filtered.filter(s => s.nombre.toLowerCase().includes(q));
 
   if (count) count.textContent = `${filtered.length} estudiante${filtered.length!==1?'s':''}`;
@@ -2482,6 +2497,148 @@ function _renderStudentCards(data, curso) {
 function filtrarEstudiantesIngreso(q) {
   _ingresoStudentFilter = q;
   if (_ingresoData) _renderStudentCards(_ingresoData, _ingresoCurrentCurso);
+}
+
+// ── Wizard: asignar curso a estudiante sin curso ──────────────────────────────
+
+let _assignIdx = null;
+let _assignAno = null;
+
+const _ANIOS_ASSIGN = [
+  { label:'1ro Básica',  key:'1o A' , base:'1o'  },
+  { label:'2do Básica',  key:'2o A' , base:'2o'  },
+  { label:'3ro Básica',  key:'3o A' , base:'3o'  },
+  { label:'4to Básica',  key:'4o A' , base:'4o'  },
+  { label:'5to Básica',  key:'5o A' , base:'5o'  },
+  { label:'6to Básica',  key:'6o A' , base:'6o'  },
+  { label:'7mo Básica',  key:'7o A' , base:'7o'  },
+  { label:'8vo Básica',  key:'8o A' , base:'8o'  },
+  { label:'1er Bach',    key:'9o A' , base:'9o Año (1o Bach)' },
+  { label:'2do Bach',    key:'10o A', base:'10o Año (2o Bach)'},
+  { label:'3er Bach',    key:'11o A', base:'11o Año (3o Bach)'},
+];
+
+function abrirAsignacionCurso(idx) {
+  _assignIdx = idx;
+  _assignAno = null;
+  const student = _ingresoData.students[idx];
+
+  document.getElementById('assign-nombre').textContent = student.nombre;
+
+  // Cursos ya existentes en este sheet
+  const courses = _ingresoData.courses || [];
+  const list = document.getElementById('assign-cursos-list');
+  if (courses.length) {
+    list.innerHTML = courses.map((c, i) => {
+      const safe  = c.replace(/'/g, "\\'");
+      const color = CURSO_COLORS[i % CURSO_COLORS.length];
+      return `<button onclick="confirmarAsignacion('${safe}')" class="px-4 py-2 rounded-xl border-2 text-sm font-semibold transition ${color}">${c}</button>`;
+    }).join('');
+    document.getElementById('assign-no-cursos').classList.add('hidden');
+  } else {
+    list.innerHTML = '';
+    document.getElementById('assign-no-cursos').classList.remove('hidden');
+  }
+
+  // Reset sección nueva
+  document.getElementById('assign-nuevo-section').classList.add('hidden');
+  document.getElementById('assign-nuevo-arrow').textContent = '▶';
+  document.getElementById('assign-paralelo-section').classList.add('hidden');
+
+  document.getElementById('ingreso-assign-modal').classList.remove('hidden');
+}
+
+function cerrarAsignacion() {
+  document.getElementById('ingreso-assign-modal').classList.add('hidden');
+  _assignIdx = null;
+  _assignAno = null;
+}
+
+function toggleAsignaNuevo() {
+  const sec   = document.getElementById('assign-nuevo-section');
+  const arrow = document.getElementById('assign-nuevo-arrow');
+  const hidden = sec.classList.toggle('hidden');
+  arrow.textContent = hidden ? '▶' : '▼';
+  if (!hidden) {
+    // Renderizar botones de años
+    document.getElementById('assign-anos').innerHTML = _ANIOS_ASSIGN.map(a =>
+      `<button onclick="seleccionarAnoAsignacion('${a.base}','${a.label}')"
+        class="px-3 py-1.5 rounded-xl border text-sm font-medium bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition">${a.label}</button>`
+    ).join('');
+    document.getElementById('assign-paralelo-section').classList.add('hidden');
+  }
+}
+
+function seleccionarAnoAsignacion(base, label) {
+  _assignAno = { base, label };
+  // Resaltar año seleccionado
+  document.querySelectorAll('#assign-anos button').forEach(b => {
+    const sel = b.textContent.trim() === label;
+    b.className = sel
+      ? 'px-3 py-1.5 rounded-xl border text-sm font-medium bg-indigo-600 text-white border-indigo-600 transition'
+      : 'px-3 py-1.5 rounded-xl border text-sm font-medium bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 transition';
+  });
+  // Mostrar paralelos
+  const ps = document.getElementById('assign-paralelo-section');
+  ps.classList.remove('hidden');
+  document.getElementById('assign-paralelos').innerHTML = ['A','B','C','D'].map(p => {
+    const cursoStr = `${base} ${p}`;
+    const safe = cursoStr.replace(/'/g,"\\'");
+    return `<button onclick="confirmarAsignacion('${safe}')"
+      class="w-12 h-12 rounded-xl border-2 text-base font-bold bg-green-50 text-green-700 border-green-200 hover:bg-green-500 hover:text-white hover:border-green-500 transition">${p}</button>`;
+  }).join('');
+}
+
+async function confirmarAsignacion(cursoStr) {
+  if (_assignIdx === null || !_ingresoData) return;
+  const student = _ingresoData.students[_assignIdx];
+
+  if (!student.contactoSheetRow) {
+    alert(`"${student.nombre}" no tiene fila en la pestaña Contacto de este sheet. No se puede asignar automáticamente.`);
+    cerrarAsignacion();
+    return;
+  }
+  if (!_ingresoData.contactoTab || _ingresoData.contactoCursoCol == null || _ingresoData.contactoCursoCol < 0) {
+    alert('No se encontró la columna Curso en la pestaña Contacto.');
+    cerrarAsignacion();
+    return;
+  }
+
+  // Indicador de carga en el botón pulsado
+  const btn = event?.target;
+  const orig = btn?.innerHTML;
+  if (btn) { btn.innerHTML = '⏳'; btn.disabled = true; }
+
+  try {
+    const res = await fetch('/api/tab-write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sheetId: _ingresoSheetId,
+        tab:     _ingresoData.contactoTab,
+        updates: [{ sheetRow: student.contactoSheetRow, col: _ingresoData.contactoCursoCol, value: cursoStr }],
+      }),
+    });
+    const r = await res.json();
+
+    if (!r.success) {
+      alert('Error al guardar: ' + (r.error || 'Error desconocido'));
+      if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+      return;
+    }
+
+    // Actualizar datos locales
+    student.curso = cursoStr;
+    if (!_ingresoData.courses.includes(cursoStr)) _ingresoData.courses.push(cursoStr);
+
+    cerrarAsignacion();
+    // Volver a la vista de cursos (actualizada)
+    _showIngresoCursosView(_ingresoData);
+
+  } catch(e) {
+    alert('Error de red: ' + e.message);
+    if (btn) { btn.innerHTML = orig; btn.disabled = false; }
+  }
 }
 
 // ── Wizard paso 4: formulario CRUD del estudiante ─────────────────────────────
