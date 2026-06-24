@@ -676,28 +676,85 @@
           <div id="ingreso-cursos-grid" class="flex flex-wrap gap-3 mb-4"></div>
         </div>
 
-        <!-- Sub-vista B: lista de estudiantes (filtrada por curso) -->
+        <!-- Sub-vista B: ingreso de notas con estudiantes siempre visibles -->
         <div id="ingreso-p3-students" class="hidden">
-          <!-- Curso activo + buscador -->
-          <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h2 class="text-lg font-bold text-gray-800">👨‍🎓 Estudiantes</h2>
-              <span id="ingreso-curso-badge" class="hidden text-xs bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-full font-medium"></span>
-              <button onclick="ingresoVolverCursos()" id="ingreso-btn-cursos" class="hidden text-xs text-gray-400 hover:text-gray-700 underline">
-                ← cambiar curso
-              </button>
-            </div>
-            <div class="flex items-center gap-2">
-              <span id="ingreso-p3-count" class="text-xs text-gray-400"></span>
-              <input id="ingreso-search" type="text" placeholder="Buscar…"
-                oninput="filtrarEstudiantesIngreso(this.value)"
-                class="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 w-40" />
+
+          <!-- Cabecera de la clase activa -->
+          <div class="flex items-start gap-3 mb-4">
+            <button onclick="ingresoVolverActividades2()" class="mt-0.5 text-xs text-gray-400 hover:text-gray-700 flex items-center gap-1 whitespace-nowrap">
+              ← actividades
+            </button>
+            <div id="ig-clase-header" class="flex-1 bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3">
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <p class="text-xs text-indigo-400 font-semibold uppercase tracking-wide" id="ig-clase-col-name"></p>
+                  <p class="text-sm font-bold text-indigo-800" id="ig-clase-tema-display">Sin tema registrado</p>
+                </div>
+                <button onclick="toggleIgClaseForm()" class="text-xs text-indigo-400 hover:text-indigo-700 flex-shrink-0">✏️ editar</button>
+              </div>
+              <!-- Inline edit form for clase info -->
+              <div id="ig-clase-form" class="hidden mt-3 space-y-2">
+                <input id="ig-tema-inp" type="text" placeholder="Tema de la clase…"
+                  class="w-full border border-indigo-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                <textarea id="ig-desc-inp" rows="2" placeholder="Descripción (opcional)…"
+                  class="w-full border border-indigo-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none"></textarea>
+                <div class="flex gap-2">
+                  <button onclick="igSaveClaseInfo()"
+                    class="bg-indigo-600 text-white text-xs font-semibold px-4 py-1.5 rounded-xl hover:bg-indigo-700">Guardar</button>
+                  <button onclick="toggleIgClaseForm()"
+                    class="bg-white border border-gray-200 text-gray-500 text-xs px-3 py-1.5 rounded-xl hover:bg-gray-50">Cancelar</button>
+                </div>
+              </div>
             </div>
           </div>
-          <div id="ingreso-student-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
-          <div id="ingreso-student-empty" class="hidden text-center py-12 text-gray-400">
-            <p class="text-3xl mb-2">🔍</p><p class="text-sm">No se encontraron estudiantes.</p>
+
+          <!-- Modo de ingreso -->
+          <div class="flex items-center gap-3 mb-4 flex-wrap">
+            <div class="flex rounded-xl border border-gray-200 overflow-hidden text-sm font-medium">
+              <button id="ig-btn-ind" onclick="igSetMode('individual')"
+                class="px-4 py-2 bg-indigo-600 text-white transition">👤 Individual</button>
+              <button id="ig-btn-grp" onclick="igSetMode('grupal')"
+                class="px-4 py-2 text-gray-500 hover:bg-gray-50 transition">👥 Grupal</button>
+            </div>
+            <span id="ig-curso-pill" class="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-full font-medium hidden"></span>
+            <span id="ig-count-label" class="text-xs text-gray-400"></span>
           </div>
+
+          <!-- Nota grupal (solo en modo grupal) -->
+          <div id="ig-group-panel" class="hidden bg-blue-50 border border-blue-100 rounded-2xl p-3 mb-4 flex items-center gap-3 flex-wrap">
+            <span class="text-sm font-semibold text-blue-700">Nota para todos:</span>
+            <input id="ig-group-val" type="number" min="0" max="10" step="0.25"
+              placeholder="0.00"
+              class="w-24 border border-blue-200 rounded-xl px-3 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+            <button onclick="igApplyGroup(false)"
+              class="bg-white border border-blue-200 text-blue-700 text-sm font-medium px-3 py-1.5 rounded-xl hover:bg-blue-100 transition">
+              Solo vacíos
+            </button>
+            <button onclick="igApplyGroup(true)"
+              class="bg-blue-600 text-white text-sm font-semibold px-3 py-1.5 rounded-xl hover:bg-blue-700 transition">
+              Aplicar a todos
+            </button>
+          </div>
+
+          <!-- Lista de estudiantes con inputs inline -->
+          <div id="ig-student-list" class="space-y-2 mb-5"></div>
+
+          <!-- Guardar -->
+          <div class="flex items-center gap-3 sticky bottom-4">
+            <button onclick="igSaveAll()" id="ig-save-btn"
+              class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-2xl transition text-sm shadow-lg">
+              💾 Guardar notas
+            </button>
+            <span id="ig-save-status" class="text-xs font-medium hidden"></span>
+          </div>
+
+          <!-- compatibilidad con código anterior -->
+          <span id="ingreso-p3-count" class="hidden"></span>
+          <div id="ingreso-student-list" class="hidden"></div>
+          <div id="ingreso-student-empty" class="hidden"></div>
+          <input id="ingreso-search" type="hidden"/>
+          <span id="ingreso-curso-badge" class="hidden"></span>
+          <button id="ingreso-btn-cursos" class="hidden" onclick="ingresoVolverCursos()"></button>
         </div>
 
         <!-- Ocultos — compatibilidad con JS existente -->

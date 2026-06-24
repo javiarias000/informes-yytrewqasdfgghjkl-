@@ -3010,26 +3010,267 @@ function ingresoVolverCursos() {
   _showIngresoCursosView(_ingresoData);
 }
 
-// ── Sub-vista B: lista de estudiantes ────────────────────────────────────────
+// ── Sub-vista B: ingreso de notas con estudiantes siempre visibles ────────────
+let _igMode    = 'individual';   // 'individual' | 'grupal'
+let _igChanges = {};             // { key: value }  key = `${sheetRow}_${colIdx}`
+let _igRecChanges = {};          // { studentNombre: texto }
+let _igStudents = [];            // estudiantes filtrados activos
+let _igColIdx   = null;
+
 function _showIngresoStudentsView(data, curso) {
   document.getElementById('ingreso-p3-actividades').classList.add('hidden');
   document.getElementById('ingreso-p3-cursos').classList.add('hidden');
   document.getElementById('ingreso-p3-students').classList.remove('hidden');
 
-  const badge   = document.getElementById('ingreso-curso-badge');
-  const btnBack = document.getElementById('ingreso-btn-cursos');
-  if (curso) {
-    badge.textContent = curso; badge.classList.remove('hidden');
-    btnBack?.classList.remove('hidden');
+  _igChanges    = {};
+  _igRecChanges = {};
+  _igColIdx     = _ingresoCurrentColIdx;
+
+  // Filtrar por curso
+  const all = data?.students || [];
+  _igStudents = curso === '__NONE__'
+    ? all.filter(s => !s.curso)
+    : (curso ? all.filter(s => s.curso === curso) : all);
+
+  // Header: nombre de columna + info de sesión
+  const col = (data?.editableCols || []).find(c => c.index === _igColIdx);
+  document.getElementById('ig-clase-col-name').textContent = col?.name || '';
+  _igRenderClaseHeader(_ingresoSesionMap[_igColIdx]);
+
+  // Pill de curso
+  const pill = document.getElementById('ig-curso-pill');
+  if (curso && curso !== '__NONE__') { pill.textContent = curso; pill.classList.remove('hidden'); }
+  else pill.classList.add('hidden');
+
+  document.getElementById('ig-count-label').textContent = `${_igStudents.length} estudiante${_igStudents.length !== 1 ? 's' : ''}`;
+
+  igSetMode('individual');
+  _igRenderStudentRows(data);
+  _igLoadRecs(data);
+}
+
+function ingresoVolverActividades2() {
+  _igChanges = {};
+  _igRecChanges = {};
+  ['ingreso-c4','ingreso-c4-arr'].forEach(id => document.getElementById(id)?.classList.add('hidden'));
+  _ingresoCurrentColIdx = null;
+  _ingresoCurrentColName = '';
+  _saveNav();
+  _showIngresoActividadesView(_ingresoData);
+}
+
+function _igRenderClaseHeader(s) {
+  document.getElementById('ig-clase-tema-display').textContent = s?.tema || 'Sin tema — clic en ✏️ para agregar';
+  const inp = document.getElementById('ig-tema-inp');
+  const dsc = document.getElementById('ig-desc-inp');
+  if (inp) inp.value = s?.tema || '';
+  if (dsc) dsc.value = s?.descripcion || '';
+}
+
+function toggleIgClaseForm() {
+  const f = document.getElementById('ig-clase-form');
+  f?.classList.toggle('hidden');
+}
+
+async function igSaveClaseInfo() {
+  const tema  = document.getElementById('ig-tema-inp')?.value.trim() || null;
+  const desc  = document.getElementById('ig-desc-inp')?.value.trim() || null;
+  const tab   = document.getElementById('ingresoTabSelect')?.value;
+  const col   = (_ingresoData?.editableCols || []).find(c => c.index === _igColIdx);
+  if (!_ingresoSheetId || !tab || !col) return;
+
+  const r = await fetch('/api/clase/sesion', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sheetId: _ingresoSheetId, tab, colIndex: _igColIdx, colName: col.name, tema, descripcion: desc }),
+  }).then(x => x.json()).catch(() => ({}));
+
+  if (r.sesion) {
+    _ingresoSesionMap[_igColIdx] = r.sesion;
+    _igRenderClaseHeader(r.sesion);
+  }
+  document.getElementById('ig-clase-form')?.classList.add('hidden');
+}
+
+// Modo grupal / individual
+function igSetMode(mode) {
+  _igMode = mode;
+  const grp = document.getElementById('ig-group-panel');
+  const bInd = document.getElementById('ig-btn-ind');
+  const bGrp = document.getElementById('ig-btn-grp');
+  if (mode === 'grupal') {
+    grp?.classList.remove('hidden');
+    bGrp?.classList.replace('text-gray-500','text-white');
+    bGrp?.classList.replace('hover:bg-gray-50','bg-indigo-600');
+    bInd?.classList.replace('bg-indigo-600','text-gray-500');
+    bInd?.classList.replace('text-white','hover:bg-gray-50');
   } else {
-    badge.classList.add('hidden');
-    btnBack?.classList.add('hidden');
+    grp?.classList.add('hidden');
+    bInd?.classList.add('bg-indigo-600'); bInd?.classList.add('text-white');
+    bInd?.classList.remove('text-gray-500'); bInd?.classList.remove('hover:bg-gray-50');
+    bGrp?.classList.remove('bg-indigo-600'); bGrp?.classList.remove('text-white');
+    bGrp?.classList.add('text-gray-500'); bGrp?.classList.add('hover:bg-gray-50');
+  }
+}
+
+function igApplyGroup(overwrite) {
+  const val = document.getElementById('ig-group-val')?.value;
+  if (!val && val !== '0') return;
+  for (const s of _igStudents) {
+    const cur = s.values?.[_igColIdx];
+    if (!overwrite && cur !== '' && cur !== null && cur !== undefined) continue;
+    const inp = document.getElementById(`ig-inp-${s.sheetRow}`);
+    if (inp) inp.value = val;
+    _igChanges[`${s.sheetRow}_${_igColIdx}`] = val;
+  }
+}
+
+function _igOnGradeChange(sheetRow, colIdx, val) {
+  _igChanges[`${sheetRow}_${colIdx}`] = val;
+}
+
+function _igOnRecChange(nombre, val) {
+  _igRecChanges[nombre] = val;
+}
+
+function igToggleRec(nombre) {
+  const el = document.getElementById(`ig-rec-${CSS.escape(nombre)}`);
+  el?.classList.toggle('hidden');
+  if (!el?.classList.contains('hidden')) el.querySelector('textarea')?.focus();
+}
+
+function _igRenderStudentRows(data) {
+  const list = document.getElementById('ig-student-list');
+  if (!list) return;
+  const isAtt = _ingresoWizardType === 'asistencias';
+  const col   = (data?.editableCols || []).find(c => c.index === _igColIdx);
+
+  list.innerHTML = _igStudents.map(s => {
+    const curVal = s.values?.[_igColIdx] ?? '';
+    const noCurso = !s.curso;
+    const avatarBg = noCurso ? 'bg-orange-100 text-orange-600' : 'bg-indigo-100 text-indigo-700';
+
+    let inputEl = '';
+    if (isAtt && col?.isDate) {
+      // Asistencia: combobox A/P/—
+      inputEl = `
+        <select id="ig-inp-${s.sheetRow}" onchange="_igOnGradeChange(${s.sheetRow},${_igColIdx},this.value)"
+          class="border border-gray-200 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-300 w-20">
+          <option value=""${curVal===''?' selected':''}>—</option>
+          <option value="P"${curVal==='P'?' selected':''}>P</option>
+          <option value="A"${curVal==='A'?' selected':''}>A</option>
+          <option value="AT"${curVal==='AT'?' selected':''}>AT</option>
+        </select>`;
+    } else {
+      inputEl = `
+        <input id="ig-inp-${s.sheetRow}" type="number" min="0" max="10" step="0.25"
+          value="${curVal}" placeholder="—"
+          onchange="_igOnGradeChange(${s.sheetRow},${_igColIdx},this.value)"
+          class="w-20 border border-gray-200 rounded-xl px-2 py-1.5 text-sm text-center focus:ring-2 focus:ring-indigo-300"/>`;
+    }
+
+    const nombreEsc = s.nombre.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return `
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <div class="flex items-center gap-3 px-3 py-2.5">
+        <div class="w-8 h-8 rounded-full ${avatarBg} text-sm font-bold flex items-center justify-center flex-shrink-0">
+          ${(s.nombre.trim()[0]||'?').toUpperCase()}
+        </div>
+        <span class="flex-1 font-medium text-gray-800 text-sm leading-tight">${s.nombre}</span>
+        ${inputEl}
+        <button onclick="igToggleRec('${nombreEsc}')"
+          title="Recomendación" class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-300 hover:text-purple-500 hover:bg-purple-50 transition text-base flex-shrink-0">💬</button>
+      </div>
+      <div id="ig-rec-${s.nombre.replace(/[^a-z0-9]/gi,'_')}" class="hidden px-4 pb-3">
+        <textarea rows="2" placeholder="Recomendación para ${s.nombre}…"
+          onchange="_igOnRecChange('${nombreEsc}',this.value)"
+          class="w-full border border-purple-100 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 resize-none bg-purple-50 placeholder-purple-200"></textarea>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function _igLoadRecs(data) {
+  if (!_ingresoSheetId || _igColIdx == null) return;
+  const tab = document.getElementById('ingresoTabSelect')?.value;
+  if (!tab) return;
+  try {
+    const s = _ingresoSesionMap[_igColIdx];
+    if (!s) return;
+    // Cargar recomendaciones existentes para este sesion
+    const r = await fetch(`/api/clase/data-completa?sheetId=${encodeURIComponent(_ingresoSheetId)}&tab=${encodeURIComponent(tab)}`).then(x => x.json());
+    const recs = (r.recomendaciones || []).filter(rc => rc.col_index === _igColIdx);
+    for (const rc of recs) {
+      const safeId = rc.student_nombre.replace(/[^a-z0-9]/gi,'_');
+      const ta = document.querySelector(`#ig-rec-${safeId} textarea`);
+      if (ta && rc.recomendacion) {
+        ta.value = rc.recomendacion;
+        _igRecChanges[rc.student_nombre] = rc.recomendacion;
+      }
+    }
+  } catch(_) {}
+}
+
+async function igSaveAll() {
+  const btn = document.getElementById('ig-save-btn');
+  const status = document.getElementById('ig-save-status');
+  if (btn) { btn.textContent = '⏳ Guardando…'; btn.disabled = true; }
+  if (status) { status.classList.add('hidden'); }
+
+  let gradeOk = true;
+  let recOk   = true;
+
+  // 1. Guardar notas en la hoja
+  if (Object.keys(_igChanges).length) {
+    const updates = [];
+    for (const [key, val] of Object.entries(_igChanges)) {
+      const [rowStr, colStr] = key.split('_');
+      const sheetRow = parseInt(rowStr);
+      const colIdx   = parseInt(colStr);
+      const s = _igStudents.find(st => st.sheetRow === sheetRow);
+      if (!s) continue;
+      updates.push({ sheetRow, colIndex: colIdx, value: val });
+    }
+    if (updates.length) {
+      try {
+        const r = await fetch('/api/tab-write', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheetId: _ingresoSheetId, updates }),
+        }).then(x => x.json());
+        if (!r.success) gradeOk = false;
+        else {
+          // Actualizar valores en _ingresoData para que el progreso sea correcto
+          for (const u of updates) {
+            const st = (_ingresoData?.students || []).find(s => s.sheetRow === u.sheetRow);
+            if (st) st.values[u.colIndex] = u.value;
+          }
+          _igChanges = {};
+        }
+      } catch(_) { gradeOk = false; }
+    }
   }
 
-  const inp = document.getElementById('ingreso-search');
-  if (inp) inp.value = '';
-  _ingresoStudentFilter = '';
-  _renderStudentCards(data, curso);
+  // 2. Guardar recomendaciones en DB
+  const tab = document.getElementById('ingresoTabSelect')?.value;
+  const col = (_ingresoData?.editableCols || []).find(c => c.index === _igColIdx);
+  if (Object.keys(_igRecChanges).length && tab && col && _ingresoSheetId) {
+    for (const [nombre, rec] of Object.entries(_igRecChanges)) {
+      try {
+        await fetch('/api/clase/recomendacion', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheetId: _ingresoSheetId, tab, colIndex: _igColIdx, colName: col.name, studentNombre: nombre, recomendacion: rec }),
+        });
+      } catch(_) { recOk = false; }
+    }
+    if (recOk) _igRecChanges = {};
+  }
+
+  if (btn) { btn.textContent = '💾 Guardar notas'; btn.disabled = false; }
+  if (status) {
+    status.textContent = gradeOk && recOk ? '✅ Guardado' : '⚠️ Error parcial';
+    status.className = `text-xs font-medium ${gradeOk && recOk ? 'text-green-600' : 'text-orange-500'}`;
+    status.classList.remove('hidden');
+    setTimeout(() => status.classList.add('hidden'), 3000);
+  }
 }
 
 // Genera el HTML de una tarjeta de estudiante
