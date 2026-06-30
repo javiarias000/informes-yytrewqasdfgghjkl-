@@ -48,6 +48,9 @@
       <div class="nav-item" id="nav-padres" onclick="showSection('padres')">
         <span class="text-lg">👨‍👩‍👧</span> Informes a padres
       </div>
+      <div class="nav-item" id="nav-informe-final" onclick="showSection('informe-final')">
+        <span class="text-lg">📄</span> Informe Final
+      </div>
       <div class="nav-item" id="nav-whatsapp" onclick="showSection('whatsapp')">
         <span class="text-lg">💬</span> WhatsApp
         <span id="waNavBadge" class="ml-auto w-2 h-2 rounded-full bg-gray-400"></span>
@@ -955,8 +958,264 @@
       </div>
     </div>
 
+    <!-- ── INFORME FINAL (wizard) ────────────────────────────────────────── -->
+    <div id="view-informe-final" class="view p-6">
+      <h1 class="text-xl font-bold text-gray-800 mb-1">📄 Informe Final Docente</h1>
+      <p class="text-xs text-gray-500 mb-5">Año lectivo 2025-2026 — Conservatorio Bolívar de Ambato</p>
+
+      <!-- Step indicator -->
+      <div class="flex items-center gap-1 mb-6 text-xs font-medium" id="ifStepBar">
+        <div class="if-step-dot active" data-step="1">1. Docente</div>
+        <div class="w-4 h-px bg-gray-300"></div>
+        <div class="if-step-dot" data-step="2">2. Director</div>
+        <div class="w-4 h-px bg-gray-300"></div>
+        <div class="if-step-dot" data-step="3">3. Asignaturas</div>
+        <div class="w-4 h-px bg-gray-300"></div>
+        <div class="if-step-dot" data-step="4">4. Contenido IA</div>
+        <div class="w-4 h-px bg-gray-300"></div>
+        <div class="if-step-dot" data-step="5">5. Generar</div>
+      </div>
+
+      <!-- ── STEP 1: Docente ── -->
+      <div id="if-step-1" class="if-step-panel bg-white rounded-2xl shadow p-5 space-y-4 max-w-2xl">
+        <h2 class="font-semibold text-gray-700">Datos del Docente</h2>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Seleccionar docente</label>
+          <select id="if-docente-select" onchange="ifSelectDocente(this.value)"
+            class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="">— buscar docente —</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Nombre completo</label>
+            <input id="if-docente-nombre" type="text" placeholder="Apellidos Nombres"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Cargo</label>
+            <input id="if-docente-cargo" type="text" placeholder="Docente" value="Docente"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Teléfono</label>
+            <input id="if-docente-telefono" type="text" placeholder="0999999999"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Correo electrónico</label>
+            <input id="if-docente-correo" type="text" placeholder="docente@conservatorio.edu.ec"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Fecha del informe</label>
+          <input id="if-fecha-informe" type="date"
+            class="border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+        </div>
+        <div class="flex justify-end">
+          <button onclick="ifGoStep(2)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2 rounded-xl transition">Siguiente →</button>
+        </div>
+      </div>
+
+      <!-- ── STEP 2: Director ── -->
+      <div id="if-step-2" class="if-step-panel hidden bg-white rounded-2xl shadow p-5 space-y-4 max-w-2xl">
+        <h2 class="font-semibold text-gray-700">Director de Área</h2>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Seleccionar director</label>
+          <select id="if-director-select" onchange="ifSelectDirector(this.value)"
+            class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="">— buscar director —</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Nombre completo</label>
+            <input id="if-director-nombre" type="text" placeholder="Apellidos Nombres"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Cargo</label>
+            <input id="if-director-cargo" type="text" placeholder="Director de área" value="Director de área"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Teléfono</label>
+            <input id="if-director-telefono" type="text" placeholder="0999999999"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Correo electrónico</label>
+            <input id="if-director-correo" type="text" placeholder="director@conservatorio.edu.ec"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+        </div>
+        <div class="flex justify-between">
+          <button onclick="ifGoStep(1)" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-xl transition">← Atrás</button>
+          <button onclick="ifGoStep(3)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2 rounded-xl transition">Siguiente →</button>
+        </div>
+      </div>
+
+      <!-- ── STEP 3: Asignaturas + Estadísticas ── -->
+      <div id="if-step-3" class="if-step-panel hidden bg-white rounded-2xl shadow p-5 space-y-4 max-w-4xl">
+        <h2 class="font-semibold text-gray-700">Asignaturas y Estadísticas</h2>
+        <p class="text-xs text-gray-500">Agrega cada asignatura/curso con sus estadísticas del año lectivo.</p>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs border-collapse">
+            <thead>
+              <tr class="bg-gray-100 text-gray-600">
+                <th class="px-2 py-2 text-left rounded-tl-lg border border-gray-200">Asignatura / Año y Paralelo</th>
+                <th class="px-2 py-2 border border-gray-200">Asignados</th>
+                <th class="px-2 py-2 border border-gray-200">Aprobados</th>
+                <th class="px-2 py-2 border border-gray-200">Retirados</th>
+                <th class="px-2 py-2 border border-gray-200">Supletorio</th>
+                <th class="px-2 py-2 border border-gray-200">% Avance</th>
+                <th class="px-2 py-2 rounded-tr-lg border border-gray-200"></th>
+              </tr>
+            </thead>
+            <tbody id="if-estadisticas-body">
+              <!-- filled by JS -->
+            </tbody>
+          </table>
+        </div>
+        <button onclick="ifAddRow()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1">
+          <span class="text-base">＋</span> Agregar asignatura
+        </button>
+
+        <div class="flex justify-between pt-2">
+          <button onclick="ifGoStep(2)" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-xl transition">← Atrás</button>
+          <button onclick="ifGoStep(4)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2 rounded-xl transition">Siguiente →</button>
+        </div>
+      </div>
+
+      <!-- ── STEP 4: Contenido IA ── -->
+      <div id="if-step-4" class="if-step-panel hidden bg-white rounded-2xl shadow p-5 space-y-4 max-w-3xl">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold text-gray-700">Contenido Pedagógico</h2>
+          <button onclick="ifGenerateNarrative()" id="if-btn-generate"
+            class="bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition flex items-center gap-2">
+            <span id="if-gen-spinner" class="hidden">⏳</span>
+            ✨ Generar con IA
+          </button>
+        </div>
+        <p class="text-xs text-gray-500">La IA genera el contenido a partir de los datos ingresados. Puedes editar libremente.</p>
+
+        <div id="if-gen-msg" class="hidden text-xs text-purple-700 bg-purple-50 rounded-xl px-3 py-2"></div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Antecedentes</label>
+            <textarea id="if-antecedentes" rows="3" placeholder="Contexto de inicio del año lectivo..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Alcance</label>
+            <textarea id="if-alcance" rows="2" placeholder="A quién va dirigido el informe..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Desarrollo de actividades</label>
+            <textarea id="if-desarrollo" rows="3" placeholder="Actividades generales del período..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Métodos pedagógicos utilizados</label>
+            <textarea id="if-metodos" rows="2" placeholder="Métodos, técnicas y estrategias..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Destrezas desarrolladas</label>
+            <textarea id="if-destrezas" rows="2" placeholder="Destrezas y competencias trabajadas..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Temáticas a reforzar en 2026-2027</label>
+            <textarea id="if-tematicas" rows="2" placeholder="Contenidos que requieren mayor énfasis..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">Estudiantes con dificultades</label>
+              <textarea id="if-dificultades" rows="3" placeholder="Nombres y tipo de dificultad..."
+                class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">Actividades y estrategias realizadas</label>
+              <textarea id="if-actividades" rows="3" placeholder="Acciones tomadas para apoyar a estudiantes..."
+                class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Conclusiones</label>
+            <textarea id="if-conclusiones" rows="3" placeholder="Resumen del año lectivo..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Recomendaciones</label>
+            <textarea id="if-recomendaciones" rows="3" placeholder="Sugerencias para el próximo ciclo..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"></textarea>
+          </div>
+        </div>
+
+        <div class="flex justify-between pt-2">
+          <button onclick="ifGoStep(3)" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-xl transition">← Atrás</button>
+          <button onclick="ifGoStep(5)" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-6 py-2 rounded-xl transition">Revisar →</button>
+        </div>
+      </div>
+
+      <!-- ── STEP 5: Generar ── -->
+      <div id="if-step-5" class="if-step-panel hidden bg-white rounded-2xl shadow p-5 space-y-5 max-w-2xl">
+        <h2 class="font-semibold text-gray-700">Generar Informe</h2>
+
+        <div id="if-preview" class="text-xs text-gray-600 bg-gray-50 rounded-xl p-4 space-y-1 max-h-64 overflow-y-auto"></div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Fecha firma docente</label>
+            <input id="if-fecha-firma" type="date"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Fecha aprobación director</label>
+            <input id="if-fecha-aprobacion" type="date"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+          </div>
+        </div>
+
+        <div id="if-export-msg" class="hidden text-xs rounded-xl px-3 py-2"></div>
+
+        <div class="flex flex-wrap gap-3 justify-between items-center">
+          <button onclick="ifGoStep(4)" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-xl transition">← Atrás</button>
+          <div class="flex gap-3">
+            <button onclick="ifExport('docx')" id="if-btn-docx"
+              class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-2 rounded-xl transition flex items-center gap-2">
+              <span>⬇</span> Descargar .docx
+            </button>
+            <button onclick="ifExport('pdf')" id="if-btn-pdf"
+              class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-5 py-2 rounded-xl transition flex items-center gap-2">
+              <span>📄</span> Descargar PDF
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /view-informe-final -->
+
   </div><!-- /mainContent -->
 </div><!-- /flex -->
+
+<style>
+  .if-step-dot {
+    @apply px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-400 cursor-default transition;
+  }
+  .if-step-dot.active {
+    @apply bg-indigo-600 text-white;
+  }
+  .if-step-dot.done {
+    @apply bg-green-100 text-green-700;
+  }
+</style>
 
 <script>
   ['sheets_v2','enabled_v2','sheetmeta_v2','formUrl_v2',

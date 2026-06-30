@@ -3,6 +3,8 @@ const API = (() => {
   const p = location.pathname;
   return p.endsWith('/') ? p : p.slice(0, p.lastIndexOf('/') + 1);
 })();
+// Llamadas al backend Django SGA1 (proxy via Node.js → /api/informes/)
+const SGA_API = API + 'api/informes/';
 
 // ── State ──────────────────────────────────────────────────────────────────────
 // savedSheets: [{ id, url, tabName, materia, contactTab, institution, contenidos }]
@@ -731,7 +733,7 @@ async function sendSelectedWA() {
 
   for (const e of toSend) {
     const msg = buildWaMessage(e.groups, e.docenteNombre, e.groups[0]?.tabName || '');
-    const res = await fetch(API + 'api/wa/send', {
+    const res = await fetch(SGA_API + 'wa/send/', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ instanceName: waInstance, phone: e.docentePhone, message: msg }),
     }).then(r => r.json());
@@ -816,7 +818,7 @@ async function submitForms() {
   });
 
   try {
-    const res = await fetch(API + 'api/submit-forms', {
+    const res = await fetch(SGA_API + 'forms/submit/', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ submissions, formUrl, formFields }),
@@ -1021,7 +1023,7 @@ async function saveDocenteEdit() {
 
   const statusEl = document.getElementById('docenteEditStatus');
 
-  const res = await fetch(API + 'api/docentes/upsert', {
+  const res = await fetch(SGA_API + 'docentes/upsert/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       nombre,
@@ -1131,7 +1133,7 @@ function parseCursoKey(raw) {
 async function loadTutoresCursos() {
   if (_tutoresCursosCache) return _tutoresCursosCache;
   try {
-    const r = await fetch(API + 'api/tutores-cursos').then(r => r.json());
+    const r = await fetch(SGA_API + 'tutores-cursos/').then(r => r.json());
     _tutoresCursosCache = r.tutoresCursos || [];
   } catch { _tutoresCursosCache = []; }
   return _tutoresCursosCache;
@@ -1261,7 +1263,7 @@ async function saveCourseDocente(i) {
 
   if (!nombre) { if (status) { status.textContent = '⚠️ El nombre es requerido'; status.classList.remove('hidden'); } return; }
 
-  const res = await fetch(API + 'api/docentes/upsert', {
+  const res = await fetch(SGA_API + 'docentes/upsert/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nombre, celular: phone, correoInstitucional: eInst, correoPersonal: ePers }),
   }).then(r => r.json());
@@ -1360,7 +1362,7 @@ async function submitNuevoInforme() {
       dificultades: g.dificultades,
     }));
     const msg = buildWaMessage(groups, docenteNombre, selected[0].tabName || '');
-    const res = await fetch(API + 'api/wa/send', {
+    const res = await fetch(SGA_API + 'wa/send/', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ instanceName: waInstance, phone, message: msg }),
     }).then(r => r.json());
@@ -1391,7 +1393,7 @@ async function submitNuevoInforme() {
       spinner.classList.add('hidden'); return;
     }
 
-    const res = await fetch(API + 'api/submit-forms', {
+    const res = await fetch(SGA_API + 'forms/submit/', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ submissions, formUrl, formFields }),
     }).then(r => r.json());
@@ -1477,10 +1479,11 @@ function showSection(name) {
   const nav  = document.getElementById('nav-' + name);
   if (view) view.classList.add('active');
   if (nav)  nav.classList.add('active');
-  if (name === 'historial')   loadHistory();
-  if (name === 'padres')     initPadresView();
-  if (name === 'ingreso')    initIngresoView();
-  if (name === 'actividades') initActividadesView();
+  if (name === 'historial')     loadHistory();
+  if (name === 'padres')       initPadresView();
+  if (name === 'ingreso')      initIngresoView();
+  if (name === 'actividades')  initActividadesView();
+  if (name === 'informe-final') ifInit();
   _saveNav();
 }
 
@@ -1785,7 +1788,7 @@ let historialData = [];
 
 async function loadHistory() {
   try {
-    const res = await fetch(API + 'api/submissions').then(r => r.json());
+    const res = await fetch(SGA_API + 'submissions/').then(r => r.json());
     historialData = res.submissions || [];
     filterHistory();
   } catch(e) {}
@@ -1910,20 +1913,20 @@ async function sendHistoryWA(submissionId) {
   const groups = [{ curso: s.curso, students: s.students || [], dificultades: s.dificultades || [] }];
   const msg = buildWaMessage(groups, s.docenteNombre || s.docente, s.tabName);
 
-  const sendRes = await fetch(API + 'api/wa/send', {
+  const sendRes = await fetch(SGA_API + 'wa/send/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ instanceName: waInstance, phone: s.docentePhone, message: msg }),
   }).then(r => r.json());
 
   if (!sendRes.success) { alert('Error al enviar WA: ' + (sendRes.error || 'desconocido')); return; }
 
-  await fetch(API + `api/submissions/${submissionId}/mark-wa-sent`, { method: 'POST' });
+  await fetch(SGA_API + `submissions/${submissionId}/mark-wa-sent/`, { method: 'POST' });
   await loadHistory();
 }
 
 async function resendForm(submissionId) {
   if (!confirm('¿Reenviar este informe al formulario Google?')) return;
-  const res = await fetch(API + `api/submissions/${submissionId}/resend-form`, { method: 'POST' }).then(r => r.json());
+  const res = await fetch(SGA_API + `submissions/${submissionId}/resend/`, { method: 'POST' }).then(r => r.json());
   if (!res.success) { alert('Error al reenviar: ' + (res.error || 'desconocido')); return; }
   alert('✅ Reenviado correctamente al formulario.');
   await loadHistory();
@@ -1938,7 +1941,7 @@ let waPollTimer = null;
 async function initWa() {
   // Load docentes list
   try {
-    const res = await fetch(API + 'api/docentes').then(r => r.json());
+    const res = await fetch(SGA_API + 'docentes/').then(r => r.json());
     docentes = res.docentes || [];
     const dl = document.getElementById('docentesList');
     dl.innerHTML = docentes.map(d => `<option value="${esc(d.nombre)}" data-phone="${d.celular}">`).join('');
@@ -1961,7 +1964,7 @@ async function connectWa() {
   waInstance = name;
   localStorage.setItem('wa_instance', name);
 
-  const res = await fetch(API + 'api/wa/instance', {
+  const res = await fetch(SGA_API + 'wa/instance/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ instanceName: name }),
   }).then(r => r.json());
@@ -2002,7 +2005,7 @@ async function pollWaStatus() {
 async function checkWaStatusSilent() {
   if (!waInstance) return false;
   try {
-    const res = await fetch(API + 'api/wa/status/' + encodeURIComponent(waInstance)).then(r => r.json());
+    const res = await fetch(SGA_API + 'wa/status/' + encodeURIComponent(waInstance) + '/').then(r => r.json());
     const connected = res.state === 'open';
     if (connected) {
       clearInterval(waPollTimer);
@@ -2135,7 +2138,7 @@ async function sendWhatsAppAll() {
     }
 
     const msg = buildWaMessage(groups, docente.nombre, sheet.tabName);
-    const res = await fetch(API + 'api/wa/send', {
+    const res = await fetch(SGA_API + 'wa/send/', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ instanceName: waInstance, phone: docente.celular, message: msg }),
     }).then(r => r.json());
@@ -2444,17 +2447,23 @@ async function sendParentReports() {
   if (lbl)   lbl.textContent = 'Enviando mensajes…';
   if (cnt)   cnt.textContent = `0 / ${selected.length}`;
 
-  const res = await fetch(API + 'api/wa/send-parent-report', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      instance:      waInstance,
-      materia:       _padresMateria,
-      periodo,
-      tabName,
-      docenteNombre: _padresDocente,
-      students:      selected,
-    }),
-  }).then(r => r.json());
+  // Enviar WA a cada padre individualmente via SGA1 Django
+  let _pSent = 0;
+  const _pResults = [];
+  for (let _pi = 0; _pi < selected.length; _pi++) {
+    const _ps = selected[_pi];
+    const _pmsg = buildParentMsgPreview(_ps, tabName);
+    const _pr = await fetch(SGA_API + 'wa/send/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instanceName: waInstance, phone: _ps.telefono, message: _pmsg }),
+    }).then(x => x.json());
+    if (_pr.success) { _pSent++; _pResults.push({ nombre: _ps.nombre, status: 'sent' }); }
+    else             { _pResults.push({ nombre: _ps.nombre, status: 'error', error: _pr.error }); }
+    if (fill) fill.style.width = `${Math.round((_pi + 1) / selected.length * 100)}%`;
+    if (cnt)  cnt.textContent  = `${_pi + 1} / ${selected.length}`;
+    if (_pi < selected.length - 1) await new Promise(_r => setTimeout(_r, 500));
+  }
+  const res = { sent: _pSent, results: _pResults };
 
   // Update progress to 100%
   if (fill)  fill.style.width = '100%';
@@ -4101,3 +4110,272 @@ loadHistory();
 document.addEventListener('DOMContentLoaded', () => {
   _restoreNav().catch(() => {});
 });
+
+// ── INFORME FINAL WIZARD ───────────────────────────────────────────────────────
+
+let _ifDocentes = [];
+let _ifStep = 1;
+let _ifStats = [];
+
+function ifInit() {
+  // Set today's date
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('if-fecha-informe').value   = today;
+  document.getElementById('if-fecha-firma').value      = today;
+  document.getElementById('if-fecha-aprobacion').value = today;
+
+  // Load docentes
+  fetch('/api/informe-final/docentes')
+    .then(r => r.json())
+    .then(d => {
+      _ifDocentes = d.docentes || [];
+      const selD = document.getElementById('if-docente-select');
+      const selDr = document.getElementById('if-director-select');
+      [selD, selDr].forEach(sel => {
+        sel.innerHTML = '<option value="">— buscar —</option>';
+        _ifDocentes.forEach(doc => {
+          const opt = document.createElement('option');
+          opt.value = doc.nombre;
+          opt.textContent = doc.nombre;
+          sel.appendChild(opt);
+        });
+      });
+    })
+    .catch(() => {});
+
+  // Ensure at least one stats row
+  if (_ifStats.length === 0) {
+    _ifStats = [{ asignatura: '', n_asignados: '', n_aprobados: '', n_retirados: '', n_supletorio: '', pct_avance: '' }];
+  }
+  ifRenderStats();
+}
+
+function ifSelectDocente(nombre) {
+  const d = _ifDocentes.find(x => x.nombre === nombre);
+  if (!d) return;
+  document.getElementById('if-docente-nombre').value   = d.nombre || '';
+  document.getElementById('if-docente-cargo').value    = d.cargo  || 'Docente';
+  document.getElementById('if-docente-telefono').value = d.celular || '';
+  document.getElementById('if-docente-correo').value   = d.correoInstitucional || d.correoPersonal || '';
+}
+
+function ifSelectDirector(nombre) {
+  const d = _ifDocentes.find(x => x.nombre === nombre);
+  if (!d) return;
+  document.getElementById('if-director-nombre').value   = d.nombre || '';
+  document.getElementById('if-director-cargo').value    = d.cargo  || 'Director de área';
+  document.getElementById('if-director-telefono').value = d.celular || '';
+  document.getElementById('if-director-correo').value   = d.correoInstitucional || d.correoPersonal || '';
+}
+
+function ifGoStep(n) {
+  document.querySelectorAll('.if-step-panel').forEach(p => p.classList.add('hidden'));
+  const panel = document.getElementById(`if-step-${n}`);
+  if (panel) panel.classList.remove('hidden');
+
+  // Update step bar
+  document.querySelectorAll('.if-step-dot').forEach(dot => {
+    const s = parseInt(dot.dataset.step);
+    dot.classList.remove('active', 'done');
+    if (s === n) dot.classList.add('active');
+    else if (s < n) dot.classList.add('done');
+  });
+
+  _ifStep = n;
+
+  if (n === 5) ifBuildPreview();
+}
+
+// Stats table
+function ifRenderStats() {
+  const tbody = document.getElementById('if-estadisticas-body');
+  tbody.innerHTML = '';
+  _ifStats.forEach((row, i) => {
+    tbody.innerHTML += `
+      <tr class="border-b border-gray-100">
+        <td class="px-1 py-1"><input data-i="${i}" data-f="asignatura" type="text" value="${row.asignatura}"
+          placeholder="Ej: Piano 3ro A"
+          class="w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1"><input data-i="${i}" data-f="n_asignados" type="number" value="${row.n_asignados}"
+          class="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1"><input data-i="${i}" data-f="n_aprobados" type="number" value="${row.n_aprobados}"
+          class="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1"><input data-i="${i}" data-f="n_retirados" type="number" value="${row.n_retirados}"
+          class="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1"><input data-i="${i}" data-f="n_supletorio" type="number" value="${row.n_supletorio}"
+          class="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1"><input data-i="${i}" data-f="pct_avance" type="text" value="${row.pct_avance}"
+          placeholder="95%"
+          class="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300" onchange="ifStatChange(this)"/></td>
+        <td class="px-1 py-1 text-center">
+          <button onclick="ifRemoveRow(${i})" class="text-red-400 hover:text-red-600 text-base leading-none">×</button>
+        </td>
+      </tr>`;
+  });
+}
+
+function ifStatChange(input) {
+  const i = parseInt(input.dataset.i);
+  const f = input.dataset.f;
+  _ifStats[i][f] = input.value;
+}
+
+function ifAddRow() {
+  _ifStats.push({ asignatura: '', n_asignados: '', n_aprobados: '', n_retirados: '', n_supletorio: '', pct_avance: '' });
+  ifRenderStats();
+}
+
+function ifRemoveRow(i) {
+  _ifStats.splice(i, 1);
+  if (_ifStats.length === 0) ifAddRow();
+  else ifRenderStats();
+}
+
+async function ifGenerateNarrative() {
+  const btn = document.getElementById('if-btn-generate');
+  const sp  = document.getElementById('if-gen-spinner');
+  const msg = document.getElementById('if-gen-msg');
+
+  btn.disabled = true;
+  sp.classList.remove('hidden');
+  msg.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/informe-final/generate-narrative', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        docente: {
+          nombre: document.getElementById('if-docente-nombre').value,
+          cargo:  document.getElementById('if-docente-cargo').value,
+        },
+        director: {
+          nombre: document.getElementById('if-director-nombre').value,
+        },
+        asignaturas: _ifStats.filter(r => r.asignatura).map(r => r.asignatura),
+        estadisticas: _ifStats.filter(r => r.asignatura),
+        anioLectivo: '2025-2026',
+      }),
+    });
+    const d = await resp.json();
+    if (!d.success) throw new Error(d.error || 'Error IA');
+
+    const fields = {
+      'if-antecedentes':  d.antecedentes,
+      'if-alcance':       d.alcance,
+      'if-desarrollo':    d.desarrollo,
+      'if-metodos':       d.metodos,
+      'if-destrezas':     d.destrezas,
+      'if-tematicas':     d.tematicas,
+      'if-dificultades':  d.dificultades_pedagogicas,
+      'if-actividades':   d.actividades_estrategias,
+      'if-conclusiones':  d.conclusiones,
+      'if-recomendaciones': d.recomendaciones,
+    };
+    Object.entries(fields).forEach(([id, val]) => {
+      if (val) document.getElementById(id).value = val;
+    });
+
+    msg.textContent = '✅ Contenido generado. Puedes editarlo antes de generar el informe.';
+    msg.className   = 'text-xs rounded-xl px-3 py-2 bg-green-50 text-green-700';
+    msg.classList.remove('hidden');
+  } catch (e) {
+    msg.textContent = '❌ ' + e.message;
+    msg.className   = 'text-xs rounded-xl px-3 py-2 bg-red-50 text-red-700';
+    msg.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    sp.classList.add('hidden');
+  }
+}
+
+function ifBuildPreview() {
+  const previewEl = document.getElementById('if-preview');
+  const items = [
+    ['Docente',       document.getElementById('if-docente-nombre').value],
+    ['Cargo',         document.getElementById('if-docente-cargo').value],
+    ['Teléfono',      document.getElementById('if-docente-telefono').value],
+    ['Correo',        document.getElementById('if-docente-correo').value],
+    ['Director',      document.getElementById('if-director-nombre').value],
+    ['Asignaturas',   _ifStats.filter(r => r.asignatura).map(r => r.asignatura).join(', ')],
+    ['Antecedentes',  (document.getElementById('if-antecedentes').value || '').slice(0, 120) + '…'],
+    ['Conclusiones',  (document.getElementById('if-conclusiones').value || '').slice(0, 120) + '…'],
+  ];
+  previewEl.innerHTML = items.map(([k, v]) => v
+    ? `<div><span class="font-medium text-gray-700">${k}:</span> <span class="text-gray-500">${v}</span></div>`
+    : ''
+  ).join('');
+}
+
+function ifCollectData() {
+  return {
+    fecha_informe:    document.getElementById('if-fecha-informe').value,
+    docente_nombre:   document.getElementById('if-docente-nombre').value,
+    docente_cargo:    document.getElementById('if-docente-cargo').value,
+    docente_telefono: document.getElementById('if-docente-telefono').value,
+    docente_correo:   document.getElementById('if-docente-correo').value,
+    director_nombre:  document.getElementById('if-director-nombre').value,
+    director_cargo:   document.getElementById('if-director-cargo').value,
+    director_telefono:document.getElementById('if-director-telefono').value,
+    director_correo:  document.getElementById('if-director-correo').value,
+    estadisticas:     _ifStats.filter(r => r.asignatura),
+    metodos:          document.getElementById('if-metodos').value,
+    destrezas:        document.getElementById('if-destrezas').value,
+    tematicas:        document.getElementById('if-tematicas').value,
+    dificultades_pedagogicas: document.getElementById('if-dificultades').value,
+    actividades_estrategias:  document.getElementById('if-actividades').value,
+    antecedentes:     document.getElementById('if-antecedentes').value,
+    alcance:          document.getElementById('if-alcance').value,
+    desarrollo:       document.getElementById('if-desarrollo').value,
+    conclusiones:     document.getElementById('if-conclusiones').value,
+    recomendaciones:  document.getElementById('if-recomendaciones').value,
+    fecha_firma:      document.getElementById('if-fecha-firma').value,
+    fecha_aprobacion: document.getElementById('if-fecha-aprobacion').value,
+  };
+}
+
+async function ifExport(type) {
+  const btnDocx = document.getElementById('if-btn-docx');
+  const btnPdf  = document.getElementById('if-btn-pdf');
+  const msg     = document.getElementById('if-export-msg');
+
+  [btnDocx, btnPdf].forEach(b => b.disabled = true);
+  msg.className = 'text-xs rounded-xl px-3 py-2 bg-blue-50 text-blue-700';
+  msg.textContent = type === 'pdf' ? '⏳ Generando PDF (esto puede tomar unos segundos)…' : '⏳ Generando .docx…';
+  msg.classList.remove('hidden');
+
+  try {
+    const endpoint = type === 'pdf' ? '/api/informe-final/export-pdf' : '/api/informe-final/export-docx';
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ifCollectData()),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      if (err.needsReauth) {
+        msg.className = 'text-xs rounded-xl px-3 py-2 bg-yellow-50 text-yellow-800';
+        msg.innerHTML = '⚠️ Necesitas re-autorizar Google Drive. <a href="/auth" class="underline font-semibold">Autorizar aquí</a>';
+        return;
+      }
+      throw new Error(err.error || 'Error al generar');
+    }
+
+    const blob = await resp.blob();
+    const docName = document.getElementById('if-docente-nombre').value || 'Docente';
+    const fname   = `Informe_Final_${docName.replace(/\s+/g, '_')}.${type}`;
+    const url     = URL.createObjectURL(blob);
+    const a       = document.createElement('a');
+    a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+
+    msg.className = 'text-xs rounded-xl px-3 py-2 bg-green-50 text-green-700';
+    msg.textContent = `✅ ${fname} descargado correctamente.`;
+  } catch (e) {
+    msg.className = 'text-xs rounded-xl px-3 py-2 bg-red-50 text-red-700';
+    msg.textContent = '❌ ' + e.message;
+  } finally {
+    [btnDocx, btnPdf].forEach(b => b.disabled = false);
+  }
+}

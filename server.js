@@ -7,6 +7,8 @@ const path = require('path');
 const OpenAI = require('openai');
 const XLSX = require('xlsx');
 const dbModule = require('./db');
+const PizZip = require('pizzip');
+const Docxtemplater = require('docxtemplater');
 
 const TZ_GYE = 'America/Guayaquil';
 function todayGye() {
@@ -29,6 +31,28 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ── Proxy SGA1 Django ─────────────────────────────────────────────────────────
+// Reenvía /api/informes/* al backend Django (SGA1).
+// Configura SGA1_BASE en el .env si Django corre en otro host/puerto.
+const SGA1_BASE = (process.env.SGA1_BASE || 'http://localhost:8000').replace(/\/$/, '');
+app.use('/api/informes', async (req, res) => {
+  try {
+    const qs = Object.keys(req.query).length
+      ? '?' + new URLSearchParams(req.query).toString()
+      : '';
+    const target = `${SGA1_BASE}/api/informes${req.path}${qs}`;
+    const cfg = { method: req.method, url: target, headers: { 'Content-Type': 'application/json' } };
+    if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length) {
+      cfg.data = req.body;
+    }
+    const resp = await axios(cfg);
+    res.status(resp.status).json(resp.data);
+  } catch (e) {
+    const data = e.response?.data || { error: e.message };
+    res.status(e.response?.status || 502).json(data);
+  }
+});
 
 // ── Evolution API ─────────────────────────────────────────────────────────────
 const EVO_URL = (process.env.EVOLUTION_API_URL || '').replace(/\/$/, '');
@@ -122,7 +146,10 @@ const oauth2Client = new google.auth.OAuth2(
   REDIRECT_URI
 );
 
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/drive.file',
+];
 const TOKEN_PATH = 'token.json';
 
 if (fs.existsSync(TOKEN_PATH)) {
@@ -2056,5 +2083,201 @@ app.get('/api/clase/data-completa', async (req, res) => {
     res.json({ success: false, error: e.message });
   }
 });
+
+// ── INFORME FINAL DOCENTE ─────────────────────────────────────────────────────
+
+const INFORME_TEMPLATE = path.join(__dirname, 'Datos', 'informe-template.docx');
+
+// GET /api/informe-final/docentes — list for wizard selectors
+app.get('/api/informe-final/docentes', async (_req, res) => {
+  try {
+    const rows = await dbModule.getAllDocentes();
+    res.json({ success: true, docentes: rows.map(r => ({
+      id: r.id, nombre: r.nombre, cargo: r.cargo,
+      celular: r.celular, correoInstitucional: r.correo_institucional,
+      correoPersonal: r.correo_personal,
+    })) });
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/informe-final/generate-narrative — GPT generates the narrative sections
+app.post('/api/informe-final/generate-narrative', async (req, res) => {
+  const { docente, director, asignaturas, estadisticas, anioLectivo } = req.body;
+
+  const estadRow = (estadisticas || []).map(e =>
+    `- ${e.asignatura}: ${e.n_asignados} asignados, ${e.n_aprobados} aprobados, ${e.n_retirados} retirados, ${e.n_supletorio} supletorio, ${e.pct_avance}% avance`
+  ).join('\n');
+
+  const systemPrompt = `Eres un asistente administrativo del Conservatorio "Bolívar de Ambato" en Ecuador.
+Redactas informes pedagógicos formales en español formal, en primera persona del docente.
+Usa terminología educativa ecuatoriana (período lectivo, quimestre, planificación microcurricular).
+Cada sección debe ser un párrafo conciso (3-6 oraciones). Sin títulos ni viñetas en las respuestas.`;
+
+  const userPrompt = `Genera el contenido para el informe final del año lectivo ${anioLectivo || '2025-2026'}.
+
+Datos del docente: ${docente?.nombre || ''}, Cargo: ${docente?.cargo || 'Docente'}
+Director de área: ${director?.nombre || ''}
+Asignaturas impartidas: ${(asignaturas || []).join(', ')}
+
+Estadísticas por asignatura:
+${estadRow || 'No disponible'}
+
+Genera EXACTAMENTE este JSON (sin markdown, sin explicaciones):
+{
+  "antecedentes": "párrafo de antecedentes (inicio del período, asignaturas asignadas, contexto)",
+  "alcance": "párrafo de alcance (a quién va dirigido, qué cubre el informe)",
+  "desarrollo": "párrafo de desarrollo de actividades generales del período",
+  "metodos": "métodos pedagógicos utilizados (lista descriptiva en prosa)",
+  "destrezas": "destrezas desarrolladas en los estudiantes",
+  "tematicas": "temáticas que será necesario reforzar en el ciclo 2026-2027",
+  "dificultades_pedagogicas": "descripción de estudiantes con dificultades o 'Ningún estudiante presentó dificultades académicas significativas'",
+  "actividades_estrategias": "actividades y estrategias realizadas con estudiantes con dificultades",
+  "conclusiones": "conclusiones del período lectivo",
+  "recomendaciones": "recomendaciones para el siguiente ciclo"
+}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt },
+      ],
+    });
+    const result = JSON.parse(completion.choices[0].message.content);
+    res.json({ success: true, ...result });
+  } catch (e) {
+    console.error('[informe-final/generate-narrative]', e.message);
+    res.json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/informe-final/export-docx — fills template, returns .docx
+app.post('/api/informe-final/export-docx', async (req, res) => {
+  try {
+    const data = buildInformeData(req.body);
+    const buf  = fillTemplate(data);
+
+    const filename = `Informe_Final_${(data.docente_nombre || 'Docente').replace(/\s+/g, '_')}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buf);
+  } catch (e) {
+    console.error('[informe-final/export-docx]', e.message);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// POST /api/informe-final/export-pdf — fills template, uploads to Drive, returns PDF download
+app.post('/api/informe-final/export-pdf', async (req, res) => {
+  try {
+    const data = buildInformeData(req.body);
+    const buf  = fillTemplate(data);
+
+    // Upload to Drive as Google Doc to convert, then export as PDF
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+    const { Readable } = require('stream');
+    const readable = new Readable();
+    readable.push(buf);
+    readable.push(null);
+
+    const docName = `Informe_Final_${(data.docente_nombre || 'Docente').replace(/\s+/g, '_')}`;
+
+    const uploaded = await drive.files.create({
+      requestBody: {
+        name: docName,
+        mimeType: 'application/vnd.google-apps.document',
+      },
+      media: {
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        body: readable,
+      },
+      fields: 'id',
+    });
+
+    const fileId = uploaded.data.id;
+
+    // Export as PDF
+    const pdfResp = await drive.files.export(
+      { fileId, mimeType: 'application/pdf' },
+      { responseType: 'arraybuffer' }
+    );
+
+    // Delete the temporary Google Doc
+    await drive.files.delete({ fileId }).catch(() => {});
+
+    const pdfBuf = Buffer.from(pdfResp.data);
+    const pdfName = `${docName}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${pdfName}"`);
+    res.send(pdfBuf);
+  } catch (e) {
+    console.error('[informe-final/export-pdf]', e.message);
+    if (e.response?.status === 403 || e.code === 403) {
+      return res.status(403).json({ success: false, error: 'Sin permiso de Drive. Re-autoriza en /auth', needsReauth: true });
+    }
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+function buildInformeData(body) {
+  const {
+    fecha_informe, docente_nombre, docente_cargo, docente_telefono, docente_correo,
+    director_nombre, director_cargo, director_telefono, director_correo,
+    estadisticas, metodos, destrezas, tematicas,
+    dificultades_pedagogicas, actividades_estrategias,
+    antecedentes, alcance, desarrollo,
+    conclusiones, recomendaciones,
+    fecha_firma, fecha_aprobacion,
+  } = body;
+
+  return {
+    fecha_informe:            fecha_informe            || todayGye(),
+    docente_nombre:           docente_nombre           || '',
+    docente_cargo:            docente_cargo            || 'Docente',
+    docente_telefono:         docente_telefono         || '',
+    docente_correo:           docente_correo           || '',
+    director_nombre:          director_nombre          || '',
+    director_cargo:           director_cargo           || 'Director de área',
+    director_telefono:        director_telefono        || '',
+    director_correo:          director_correo          || '',
+    estadisticas:             (estadisticas || []).map(e => ({
+      asignatura:   String(e.asignatura   || ''),
+      n_asignados:  String(e.n_asignados  || ''),
+      n_aprobados:  String(e.n_aprobados  || ''),
+      n_retirados:  String(e.n_retirados  || ''),
+      n_supletorio: String(e.n_supletorio || ''),
+      pct_avance:   String(e.pct_avance   || ''),
+    })),
+    metodos:                  metodos                  || '',
+    destrezas:                destrezas                || '',
+    tematicas:                tematicas                || '',
+    dificultades_pedagogicas: dificultades_pedagogicas || '',
+    actividades_estrategias:  actividades_estrategias  || '',
+    antecedentes:             antecedentes             || '',
+    alcance:                  alcance                  || '',
+    desarrollo:               desarrollo               || '',
+    conclusiones:             conclusiones             || '',
+    recomendaciones:          recomendaciones          || '',
+    fecha_firma:              fecha_firma              || todayGye(),
+    fecha_aprobacion:         fecha_aprobacion         || todayGye(),
+  };
+}
+
+function fillTemplate(data) {
+  const content = fs.readFileSync(INFORME_TEMPLATE);
+  const zip = new PizZip(content);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    delimiters: { start: '{{', end: '}}' },
+  });
+  doc.render(data);
+  return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
 
 app.listen(3001, () => console.log('Servidor en http://localhost:3001'));
